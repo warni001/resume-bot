@@ -1,0 +1,38 @@
+name: CI
+
+# Jobs added as the scaffold lands: test (compileall + pytest, Python 3.14)
+# and deploy (needs test, push-to-main only, AZURE_DEPLOY_CREDENTIALS +
+# /health canary). See docs/resume-bot-agents-sdk-spec.md §6.2.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  ponytail:
+    # ponytail.md is a byte-exact copy of upstream's AGENTS.md.
+    # On push to main this job fixes staleness itself: it runs
+    # scripts/sync-ponytail.sh, which commits and pushes the update.
+    # The fix commit re-triggers CI, but the check then passes, so no loop.
+    # On pull requests it only checks (no push from a PR run) and fails
+    # red so a human runs the script.
+    # Docs staleness does not block deploys, so this job is not in
+    # deploy's needs chain.
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sync ponytail.md from upstream
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git checkout "${{ github.ref_name }}"
+            scripts/sync-ponytail.sh
+          else
+            scripts/sync-ponytail.sh --check
+          fi
