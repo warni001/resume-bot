@@ -32,11 +32,15 @@
 #   5. Deploys infra/main.bicep (App Service F1, Azure Bot F0 + Teams
 #      channel, Key Vault, Storage account for Blob state, Log Analytics
 #      + App Insights).
+#   6. Ensures the Direct Line channel exists on the new bot (idempotent
+#      — creates it only if missing) and stores its secret in the Key
+#      Vault as DirectLineSecret. The secret is held in a shell variable
+#      only and never printed.
 #
 # Re-running is safe: the deployment is incremental, and the app
-# registration and service-principal steps reuse what already exists. It
-# WILL mint a fresh app password each run and update the Key Vault secret
-# to match.
+# registration, service-principal, and Direct Line steps reuse what
+# already exists. It WILL mint a fresh app password each run and update
+# the Key Vault secret to match.
 set -euo pipefail
 
 RESOURCE_GROUP="${RESOURCE_GROUP:-rg-resume-bot}"
@@ -126,14 +130,33 @@ RESULT="$(az deployment group create \
   --query properties.outputs -o json)"
 unset APP_PASSWORD
 
+# Direct Line: ensure the channel exists on the new bot and store its
+# secret in the Key Vault as DirectLineSecret (idempotent — the channel
+# is created only if missing; the secret is re-stored from the channel
+# on every run so a re-run repairs it). Bot name and vault name come
+# from the bicep outputs above.
+BOT_NAME="$(echo "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["botName"]["value"])')"
+KEY_VAULT_NAME="$(echo "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["keyVaultUrl"]["value"].split("https://")[1].split(".vault.azure.net")[0])')"
+echo "Ensuring Direct Line channel on bot $BOT_NAME ..."
+if az bot directline show --resource-group "$RESOURCE_GROUP" --name "$BOT_NAME" >/dev/null 2>&1; then
+  echo "Direct Line channel already exists on $BOT_NAME; getting its secret..."
+  DL_SECRET="$(az bot directline show --resource-group "$RESOURCE_GROUP" --name "$BOT_NAME" --query properties.properties.sites[0].key -o tsv)"
+else
+  echo "Creating Direct Line channel on $BOT_NAME ..."
+  DL_SECRET="$(az bot directline create --resource-group "$RESOURCE_GROUP" --name "$BOT_NAME" --query properties.properties.sites[0].key -o tsv)"
+fi
+[ -n "$DL_SECRET" ] || { echo "Failed to get Direct Line secret."; exit 1; }
+az keyvault secret set --vault-name "$KEY_VAULT_NAME" --name DirectLineSecret --value "$DL_SECRET" -o none
+unset DL_SECRET
+echo "Stored DirectLineSecret in Key Vault $KEY_VAULT_NAME."
+
 echo
 echo "Done. Key outputs:"
 echo "$RESULT" | python3 -c 'import json,sys; [print("  %s: %s" % (k, v["value"])) for k, v in json.load(sys.stdin).items()]'
 echo
 echo "Next steps:"
-echo "  1. Store the remaining secrets in the new Key Vault (vault URL above):"
-echo "       OpenRouterApiKey, DirectLineSecret (create a Direct Line channel on the"
-echo "       new bot first, then store its key), and the app settings below."
+echo "  1. Store the OpenRouterApiKey secret in the new Key Vault (vault URL above)."
+echo "     (DirectLineSecret is already stored by this script.)"
 echo "  2. Set the app settings on the new web app:"
 echo "       OPENROUTER_MODEL, DEMO_GATE_NAME, APP_BASE_URL (the new web app URL)."
 echo "  3. Add the AZURE_DEPLOY_CREDENTIALS secret to the resume-bot repo (step 4 above,"
