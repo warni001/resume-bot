@@ -9,31 +9,34 @@
 #   - Run on John's Mac (where `az` lives), not on the assistant VM.
 #
 # What it does:
-#   1. Creates the Microsoft app registration (SingleTenant — Azure Bot
-#      Service no longer accepts new MultiTenant bots) + a client secret.
-#      The secret is held in a shell variable only, passed to the
-#      deployment as a secure parameter, and stored in Key Vault by the
-#      template. It is never printed or written to disk.
+#   1. Ensures the Microsoft app registration (SingleTenant — Azure Bot
+#      Service no longer accepts new MultiTenant bots) exists, reusing
+#      one with the same display name if present, + a fresh client
+#      secret. The secret is held in a shell variable only, passed to
+#      the deployment as a secure parameter, and stored in Key Vault by
+#      the template. It is never printed or written to disk.
 #   2. Ensures a service principal exists for the app registration
 #      (idempotent — creates it only if missing). This closes the Oct 30
 #      gap, when the old bot's app registration had no service principal
 #      and auth failed with AADSTS7000229 until one was created by hand.
-#   3. Ensures the deploy service principal `github-resume-bot-deploy`
+#   3. Creates the resource group (before the deploy SP step — the
+#      Contributor role assignment needs the resource group to exist).
+#   4. Ensures the deploy service principal `github-resume-bot-deploy`
 #      exists with Contributor on the resource group (idempotent). On a
-#      fresh creation it prints the credential JSON — save it as the
-#      AZURE_DEPLOY_CREDENTIALS secret in the resume-bot repo. It is
-#      shown only once. Do not store it anywhere else (not in the Key
-#      Vault — the bot's managed identity could read it and gain a
-#      deployment credential).
-#   4. Creates the resource group.
+#      fresh creation it prints the credential JSON; on a re-run where
+#      the SP already exists it resets the credential and prints the
+#      JSON. Save it as the AZURE_DEPLOY_CREDENTIALS secret in the
+#      resume-bot repo. It is shown only once. Do not store it anywhere
+#      else (not in the Key Vault — the bot's managed identity could
+#      read it and gain a deployment credential).
 #   5. Deploys infra/main.bicep (App Service F1, Azure Bot F0 + Teams
 #      channel, Key Vault, Storage account for Blob state, Log Analytics
 #      + App Insights).
 #
-# Re-running is safe: the deployment is incremental, and the two
-# service-principal steps skip when the principals already exist. It WILL
-# mint a fresh app password each run and update the Key Vault secret to
-# match.
+# Re-running is safe: the deployment is incremental, and the app
+# registration and service-principal steps reuse what already exists. It
+# WILL mint a fresh app password each run and update the Key Vault secret
+# to match.
 set -euo pipefail
 
 RESOURCE_GROUP="${RESOURCE_GROUP:-rg-resume-bot}"
@@ -54,11 +57,17 @@ SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
 TENANT_ID="$(az account show --query tenantId -o tsv)"
 echo "Tenant: $TENANT_ID"
 
-echo "Creating app registration '$APP_DISPLAY_NAME' (SingleTenant)..."
-APP_ID="$(az ad app create \
-  --display-name "$APP_DISPLAY_NAME" \
-  --sign-in-audience AzureADMyOrg \
-  --query appId -o tsv)"
+echo "Ensuring app registration '$APP_DISPLAY_NAME' (SingleTenant)..."
+APP_ID="$(az ad app list --display-name "$APP_DISPLAY_NAME" --query "[0].appId" -o tsv)"
+if [ -n "$APP_ID" ]; then
+  echo "App registration '$APP_DISPLAY_NAME' already exists ($APP_ID); reusing it."
+else
+  APP_ID="$(az ad app create \
+    --display-name "$APP_DISPLAY_NAME" \
+    --sign-in-audience AzureADMyOrg \
+    --query appId -o tsv)"
+  echo "Created app registration '$APP_DISPLAY_NAME' ($APP_ID)."
+fi
 
 echo "Creating client secret for app $APP_ID ..."
 APP_PASSWORD="$(az ad app credential reset \
@@ -74,12 +83,21 @@ else
   echo "Created service principal for $APP_ID."
 fi
 
+echo "Creating resource group $RESOURCE_GROUP in $LOCATION ..."
+az group create --name "$RESOURCE_GROUP" --location "$LOCATION" -o none
+
 echo "Ensuring deploy service principal '$DEPLOY_SP_NAME' ..."
 DEPLOY_SP_APP_ID="$(az ad sp list --display-name "$DEPLOY_SP_NAME" --query "[0].appId" -o tsv)"
 RG_SCOPE="/subscriptions/$SUBSCRIPTION_ID/resourceGroups/$RESOURCE_GROUP"
 if [ -n "$DEPLOY_SP_APP_ID" ]; then
-  echo "Deploy SP '$DEPLOY_SP_NAME' already exists (appId $DEPLOY_SP_APP_ID); skipping creation."
-  echo "The AZURE_DEPLOY_CREDENTIALS secret is already in the repo from the first creation."
+  echo "Deploy SP '$DEPLOY_SP_NAME' already exists (appId $DEPLOY_SP_APP_ID); resetting its credential..."
+  DEPLOY_SP_PASSWORD="$(az ad sp credential reset --id "$DEPLOY_SP_APP_ID" --append --query password -o tsv)"
+  [ -n "$DEPLOY_SP_PASSWORD" ] || { echo "Failed to reset deploy SP credential."; exit 1; }
+  python3 -c 'import json,sys; print(json.dumps({"clientId": sys.argv[1], "clientSecret": sys.argv[2], "subscriptionId": sys.argv[3], "tenantId": sys.argv[4], "activeDirectoryEndpointUrl": "https://login.microsoftonline.com/", "resourceManagerEndpointUrl": "https://management.azure.com/", "activeDirectoryGraphResourceId": "https://graph.windows.net/", "sqlManagementEndpointUrl": "https://management.core.windows.net:8443/", "galleryEndpointUrl": "https://gallery.azure.com/", "managementEndpointUrl": "https://management.core.windows.net/"}, indent=2))' "$DEPLOY_SP_APP_ID" "$DEPLOY_SP_PASSWORD" "$SUBSCRIPTION_ID" "$TENANT_ID"
+  unset DEPLOY_SP_PASSWORD
+  echo
+  echo "Save the JSON above as the AZURE_DEPLOY_CREDENTIALS secret in the resume-bot repo."
+  echo "It is shown only once. Do not store it anywhere else."
 else
   echo "Creating deploy SP '$DEPLOY_SP_NAME' with Contributor on $RESOURCE_GROUP ..."
   az ad sp create-for-rbac --name "$DEPLOY_SP_NAME" --role Contributor --scopes "$RG_SCOPE" --sdk-auth
@@ -100,9 +118,6 @@ if [ -n "$DEPLOY_SP_APP_ID" ]; then
   fi
 fi
 
-echo "Creating resource group $RESOURCE_GROUP in $LOCATION ..."
-az group create --name "$RESOURCE_GROUP" --location "$LOCATION" -o none
-
 echo "Deploying infra/main.bicep ..."
 RESULT="$(az deployment group create \
   --resource-group "$RESOURCE_GROUP" \
@@ -121,8 +136,8 @@ echo "       OpenRouterApiKey, DirectLineSecret (create a Direct Line channel on
 echo "       new bot first, then store its key), and the app settings below."
 echo "  2. Set the app settings on the new web app:"
 echo "       OPENROUTER_MODEL, DEMO_GATE_NAME, APP_BASE_URL (the new web app URL)."
-echo "  3. Add the AZURE_DEPLOY_CREDENTIALS secret to the resume-bot repo (step 3 above,"
-echo "     if this was a fresh creation)."
+echo "  3. Add the AZURE_DEPLOY_CREDENTIALS secret to the resume-bot repo (step 4 above,"
+echo "     if this was a fresh creation or a credential reset)."
 echo "  4. Deploy the code: from the repo root, zip deploy (or wire CI/CD):"
 echo "       az webapp deploy --resource-group $RESOURCE_GROUP --name <webAppName from outputs> --src-path <zip>"
 echo "  5. Health check: https://<webAppName>.azurewebsites.net/health (all five flags true)"
