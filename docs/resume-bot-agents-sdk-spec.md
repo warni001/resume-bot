@@ -25,7 +25,7 @@ These are settled. The spec does not re-litigate them.
 - **Keep the tooling.** `infra/deploy-bot.sh`, the CI jobs (test / deploy / ponytail), `AGENTS.md` + Ponytail (`ponytail.md`, `AGENTS.project.md`, `scripts/sync-ponytail.sh`, `scripts/generate-agents-md.sh`) all carry over, adapted to the new repo.
 - **Logging stays OpenTelemetry → Azure Monitor.** Same as the old bot. Azure logging is a first-class requirement, not an afterthought.
 - **Specs first.** This document is reviewed, edited, and approved by John before any code is written.
-- **Python 3.12.** Project-wide pin, same as the old bot.
+- **Python 3.14.** Project-wide pin. This is the newest version supported by both the Agents SDK 1.9.0 (PyPI lists 3.10–3.14) and Azure App Service (Linux runtimes as of Oct 22, 2026 include 3.14), so it is the longest-supported option on the deployment target. 3.12 was the old bot's version — carried over by inertia, not by decision — and there is no reason to pick it over 3.14 for a greenfield project. (John, Nov 9: "this is a greenfield project so there needs to be a meaningful reason.")
 - **Config lives in config, not code.** No model IDs, secrets, or environment-specific values hardcoded. (Standing rule.)
 - **No secrets in client-side code or SCM.** No secret, however trivial, in the repo or the demo page. (Standing rule.)
 - **John keeps the pen.** He approves specific verbiage before anything is sent or filed on his behalf; he designs the gate card himself.
@@ -55,7 +55,7 @@ These block the build until decided. Defaults are proposed; John picks.
 
 | Layer | Choice | Notes |
 |-------|--------|-------|
-| Language | Python 3.12 | Pin project-wide. |
+| Language | Python 3.14 | Pin project-wide. Newest supported by both the SDK (1.9.0: 3.10–3.14) and App Service (runtimes include 3.14). |
 | Agent SDK | Microsoft 365 Agents SDK for Python, **1.9.0** | Packages: `microsoft-agents-hosting-aiohttp`, `microsoft-agents-hosting-core`, `microsoft-agents-activity`, `microsoft-agents-authentication-msal`, `microsoft-agents-storage-blob` (later, for Blob state). |
 | HTTP server | aiohttp (via the SDK's hosting-aiohttp package) | Same as the old bot. Serves `/api/messages` (via the SDK adapter), plus our own routes: `/health`, `/demo`, `/api/directline/token`, `/static/`. |
 | Auth | MSAL via `microsoft-agents-authentication-msal`, SingleTenant | Same app registration (`a373dd89-9618-4e0b-8603-760575b9f47f`), same tenant (`6803d008-cce8-4670-8115-f4a77cca0357`). The SDK reads its connection settings from env vars — see §5.7: determine the exact env var names 1.9.0 expects and map the existing vault secrets to them. |
@@ -64,7 +64,7 @@ These block the build until decided. Defaults are proposed; John picks.
 | Chat history | Rolling 4-exchange history in conversation state | Same as the old bot (`MAX_HISTORY_ENTRIES = 8` — 4 exchanges × 2). |
 | Logging | OpenTelemetry → Azure Monitor (Application Insights) | Same as the old bot. See §5.5. |
 | Secrets | Env / `.env` locally; Azure Key Vault in prod | Same vault (`kv-teamsbot-us4izdyz`), same secret names. See §5.7. |
-| Hosting | Azure App Service, F1 (free) Linux, Python 3.12 | New web app (parallel deployment, decision #2). Same resource group `rg-teams-bot-dev`, westus3. |
+| Hosting | Azure App Service, F1 (free) Linux, Python 3.14 | New web app (parallel deployment, decision #2). Same resource group `rg-teams-bot-dev`, westus3. |
 | CI/CD | GitHub Actions: test → deploy (auto on push to main) + ponytail auto-fix | Same shape as the old bot. See §6.2. |
 
 ### 4.2 How the Agents SDK differs from the old Bot Framework SDK (what the build must account for)
@@ -126,7 +126,7 @@ resume-bot/
 │   ├── generate-agents-md.sh
 │   └── sync-ponytail.sh    # Sync + regen + commit + push. --check for CI. --no-push.
 ├── requirements.txt        # Pinned: microsoft-agents-* == 1.9.0, aiohttp, aiohttp, etc.
-├── .python-version         # 3.12 (open offer from the old bot — include it this time).
+├── .python-version         # 3.14 (open offer from the old bot — include it this time).
 ├── .gitignore              # .venv, .env, __pycache__, etc. Never commit .env.
 └── README.md               # Portfolio README: what it is, architecture, how to run it,
                             #   demo link. This is the first thing an employer reads.
@@ -251,7 +251,7 @@ The new resources mirror this shape (new resource group or new names within `rg-
 
 `.github/workflows/ci.yml` — three jobs, same shape as the old bot:
 
-- **`test`** (push + PR to main): Python 3.12, `compileall` + `pytest`. Must pass before any commit lands.
+- **`test`** (push + PR to main): Python 3.14, `compileall` + `pytest`. Must pass before any commit lands.
 - **`deploy`** (needs `test`; push-to-main only): zips the deploy file list, `azure/login@v2` with `${{ secrets.AZURECREDENTIALS }}`, `azure/webapps-deploy@v3` to the new web app (name set at provisioning), then the `/health` canary (all five flags, up to 30×10s, fail loudly). **Requires decision #7** — the `AZURECREDENTIALS` secret must exist in the new repo.
 - **`ponytail`** (push to main: auto-fix; PR: check-only): runs `scripts/sync-ponytail.sh` (auto-fix, commits as `github-actions[bot]`) on push; `--check` on PRs. Not in the deploy job's `needs` chain (docs staleness doesn't block deploys).
 
