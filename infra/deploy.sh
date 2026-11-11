@@ -140,22 +140,27 @@ unset APP_PASSWORD
 # Direct Line: ensure the channel exists on the new bot and store its
 # secret in the Key Vault as DirectLineSecret. Bot name and vault name
 # come from the bicep outputs above.
+# The Direct Line secret key is never returned by `az bot directline
+# show` or `create` — the API leaves the key empty on GET/PUT. The key
+# is only returned by POSTing to the channel's regeneratekeys action,
+# which rotates it. So the script only regenerates when the vault lacks
+# the secret; when the secret is already stored, it skips and leaves the
+# working key alone.
 BOT_NAME="$(echo "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["botName"]["value"])')"
 KEY_VAULT_NAME="$(echo "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["keyVaultUrl"]["value"].split("https://")[1].split(".vault.azure.net")[0])')"
 echo "Ensuring Direct Line channel on bot $BOT_NAME ..."
 if az bot directline show --resource-group "$RESOURCE_GROUP" --name "$BOT_NAME" >/dev/null 2>&1; then
-  # Channel exists. `show` does not return the secret key, so if the
-  # vault already has DirectLineSecret, leave it alone.
-  if az keyvault secret show --vault-name "$KEY_VAULT_NAME" --name DirectLineSecret >/dev/null 2>&1; then
-    echo "DirectLineSecret already in Key Vault $KEY_VAULT_NAME; skipping."
-  else
-    echo "Direct Line channel exists on $BOT_NAME but DirectLineSecret is not in the vault."
-    echo "The key cannot be read back via the CLI. Delete the channel and re-run deploy.sh to recreate it, or copy the key from the Azure Portal into the vault as DirectLineSecret."
-    exit 1
-  fi
+  echo "Direct Line channel already exists on $BOT_NAME."
 else
   echo "Creating Direct Line channel on $BOT_NAME ..."
-  DL_SECRET="$(az bot directline create --resource-group "$RESOURCE_GROUP" --name "$BOT_NAME" --query properties.properties.sites[0].key -o tsv)"
+  az bot directline create --resource-group "$RESOURCE_GROUP" --name "$BOT_NAME" -o none
+fi
+if az keyvault secret show --vault-name "$KEY_VAULT_NAME" --name DirectLineSecret >/dev/null 2>&1; then
+  echo "DirectLineSecret already in Key Vault $KEY_VAULT_NAME; skipping."
+else
+  echo "DirectLineSecret not in the vault; regenerating the Direct Line key and storing it..."
+  SUB_ID="$(az account show --query id -o tsv)"
+  DL_SECRET="$(az rest --method post --url "https://management.azure.com/subscriptions/$SUB_ID/resourceGroups/$RESOURCE_GROUP/providers/Microsoft.BotService/botServices/$BOT_NAME/channels/DirectLineChannel/regeneratekeys?api-version=2022-09-15" --body '{"siteName": "Default Site", "key": "key1"}' --query properties.properties.sites[0].key -o tsv)"
   [ -n "$DL_SECRET" ] || { echo "Failed to get Direct Line secret."; exit 1; }
   az keyvault secret set --vault-name "$KEY_VAULT_NAME" --name DirectLineSecret --value "$DL_SECRET" -o none
   unset DL_SECRET
