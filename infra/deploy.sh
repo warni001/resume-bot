@@ -32,15 +32,12 @@
 #   5. Deploys infra/main.bicep (App Service F1, Azure Bot F0 + Teams
 #      channel, Key Vault, Storage account for Blob state, Log Analytics
 #      + App Insights).
-#   6. Ensures the Direct Line channel exists on the new bot (idempotent
-#      — creates it only if missing) and stores its secret in the Key
-#      Vault as DirectLineSecret. The secret is held in a shell variable
-#      only and never printed.
+#   6. Ensures the Direct Line channel exists on the new bot and stores
+#      its secret in the Key Vault as DirectLineSecret. The secret is
+#      held in a shell variable only and never printed.
 #
-# Re-running is safe: the deployment is incremental, and the app
-# registration, service-principal, and Direct Line steps reuse what
-# already exists. It WILL mint a fresh app password each run and update
-# the Key Vault secret to match.
+# Re-running is safe: the deployment is incremental. It WILL mint a
+# fresh app password each run and update the Key Vault secret to match.
 set -euo pipefail
 
 RESOURCE_GROUP="${RESOURCE_GROUP:-rg-resume-bot}"
@@ -131,10 +128,8 @@ RESULT="$(az deployment group create \
 unset APP_PASSWORD
 
 # Direct Line: ensure the channel exists on the new bot and store its
-# secret in the Key Vault as DirectLineSecret (idempotent — the channel
-# is created only if missing; the secret is re-stored from the channel
-# on every run so a re-run repairs it). Bot name and vault name come
-# from the bicep outputs above.
+# secret in the Key Vault as DirectLineSecret. Bot name and vault name
+# come from the bicep outputs above.
 BOT_NAME="$(echo "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["botName"]["value"])')"
 KEY_VAULT_NAME="$(echo "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["keyVaultUrl"]["value"].split("https://")[1].split(".vault.azure.net")[0])')"
 echo "Ensuring Direct Line channel on bot $BOT_NAME ..."
