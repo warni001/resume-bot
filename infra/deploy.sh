@@ -144,16 +144,23 @@ BOT_NAME="$(echo "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.st
 KEY_VAULT_NAME="$(echo "$RESULT" | python3 -c 'import json,sys; print(json.load(sys.stdin)["keyVaultUrl"]["value"].split("https://")[1].split(".vault.azure.net")[0])')"
 echo "Ensuring Direct Line channel on bot $BOT_NAME ..."
 if az bot directline show --resource-group "$RESOURCE_GROUP" --name "$BOT_NAME" >/dev/null 2>&1; then
-  echo "Direct Line channel already exists on $BOT_NAME; getting its secret..."
-  DL_SECRET="$(az bot directline show --resource-group "$RESOURCE_GROUP" --name "$BOT_NAME" --query properties.properties.sites[0].key -o tsv)"
+  # Channel exists. `show` does not return the secret key, so if the
+  # vault already has DirectLineSecret, leave it alone.
+  if az keyvault secret show --vault-name "$KEY_VAULT_NAME" --name DirectLineSecret >/dev/null 2>&1; then
+    echo "DirectLineSecret already in Key Vault $KEY_VAULT_NAME; skipping."
+  else
+    echo "Direct Line channel exists on $BOT_NAME but DirectLineSecret is not in the vault."
+    echo "The key cannot be read back via the CLI. Delete the channel and re-run deploy.sh to recreate it, or copy the key from the Azure Portal into the vault as DirectLineSecret."
+    exit 1
+  fi
 else
   echo "Creating Direct Line channel on $BOT_NAME ..."
   DL_SECRET="$(az bot directline create --resource-group "$RESOURCE_GROUP" --name "$BOT_NAME" --query properties.properties.sites[0].key -o tsv)"
+  [ -n "$DL_SECRET" ] || { echo "Failed to get Direct Line secret."; exit 1; }
+  az keyvault secret set --vault-name "$KEY_VAULT_NAME" --name DirectLineSecret --value "$DL_SECRET" -o none
+  unset DL_SECRET
+  echo "Stored DirectLineSecret in Key Vault $KEY_VAULT_NAME."
 fi
-[ -n "$DL_SECRET" ] || { echo "Failed to get Direct Line secret."; exit 1; }
-az keyvault secret set --vault-name "$KEY_VAULT_NAME" --name DirectLineSecret --value "$DL_SECRET" -o none
-unset DL_SECRET
-echo "Stored DirectLineSecret in Key Vault $KEY_VAULT_NAME."
 
 echo
 echo "Done. Key outputs:"
