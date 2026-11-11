@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Resume Bot — Demo</title>
+  <!-- No credentials in this page: it fetches a short-lived Direct Line
+       token from /api/directline/token on load. -->
+  <!-- Pinned 4.19.2 via jsDelivr: the MS CDN versioned path 404s,
+       only /latest/ is served there, and /latest/ moves under you. -->
+  <script src="https://cdn.jsdelivr.net/npm/botframework-webchat@4.19.2/dist/webchat.js"></script>
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #webchat { height: 100%; width: 100%; }
+  </style>
+</head>
+<body>
+  <div id="webchat"></div>
+  <script>
+    (async () => {
+      const el = document.getElementById('webchat');
+      let res;
+      try {
+        res = await fetch('/api/directline/token');
+      } catch (err) {
+        el.innerText = 'Demo unavailable — could not reach the token endpoint.';
+        return;
+      }
+      if (!res.ok) {
+        el.innerText = 'Demo unavailable — Direct Line is not configured yet.';
+        return;
+      }
+      const { token } = await res.json();
+      window.WebChat.renderWebChat(
+        { directLine: window.WebChat.createDirectLine({ token }) },
+        el
+      );
+    })();
+  </script>
+</body>
+</html>
