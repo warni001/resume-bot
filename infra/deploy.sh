@@ -6,6 +6,9 @@
 #     (use the account that owns the subscription; you must be a Global
 #     Administrator — the two service-principal steps below need it)
 #   - Bicep: the script installs it via `az bicep install` if missing.
+#   - GitHub CLI (`gh`), authenticated, to set the AZURE_DEPLOY_CREDENTIALS
+#     secret automatically. Optional — without it, the script prints the
+#     credential JSON for manual copy.
 #   - Run on John's Mac (where `az` lives), not on the assistant VM.
 #
 # What it does:
@@ -22,13 +25,13 @@
 #   3. Creates the resource group (before the deploy SP step — the
 #      Contributor role assignment needs the resource group to exist).
 #   4. Ensures the deploy service principal `github-resume-bot-deploy`
-#      exists with Contributor on the resource group (idempotent). On a
-#      fresh creation it prints the credential JSON; on a re-run where
-#      the SP already exists it resets the credential and prints the
-#      JSON. Save it as the AZURE_DEPLOY_CREDENTIALS secret in the
-#      resume-bot repo. It is shown only once. Do not store it anywhere
-#      else (not in the Key Vault — the bot's managed identity could
-#      read it and gain a deployment credential).
+#      exists with Contributor on the resource group (idempotent). The
+#      credential JSON is set as the AZURE_DEPLOY_CREDENTIALS secret in
+#      the resume-bot repo via `gh secret set` (requires gh CLI,
+#      authenticated). If gh is missing, the JSON is printed for manual
+#      copy. It is shown only once. Do not store it anywhere else (not
+#      in the Key Vault — the bot's managed identity could read it and
+#      gain a deployment credential).
 #   5. Deploys infra/main.bicep (App Service F1, Azure Bot F0 + Teams
 #      channel, Key Vault, Storage account for Blob state, Log Analytics
 #      + App Insights).
@@ -45,6 +48,7 @@ LOCATION="${LOCATION:-westus3}"
 BASE_NAME="${BASE_NAME:-resume-bot}"
 APP_DISPLAY_NAME="${APP_DISPLAY_NAME:-resume-bot}"
 DEPLOY_SP_NAME="${DEPLOY_SP_NAME:-github-resume-bot-deploy}"
+GITHUB_REPO="${GITHUB_REPO:-warni001/resume-bot}"
 
 cd "$(dirname "$0")"
 
@@ -94,18 +98,24 @@ if [ -n "$DEPLOY_SP_APP_ID" ]; then
   echo "Deploy SP '$DEPLOY_SP_NAME' already exists (appId $DEPLOY_SP_APP_ID); resetting its credential..."
   DEPLOY_SP_PASSWORD="$(az ad sp credential reset --id "$DEPLOY_SP_APP_ID" --append --query password -o tsv)"
   [ -n "$DEPLOY_SP_PASSWORD" ] || { echo "Failed to reset deploy SP credential."; exit 1; }
-  python3 -c 'import json,sys; print(json.dumps({"clientId": sys.argv[1], "clientSecret": sys.argv[2], "subscriptionId": sys.argv[3], "tenantId": sys.argv[4], "activeDirectoryEndpointUrl": "https://login.microsoftonline.com/", "resourceManagerEndpointUrl": "https://management.azure.com/", "activeDirectoryGraphResourceId": "https://graph.windows.net/", "sqlManagementEndpointUrl": "https://management.core.windows.net:8443/", "galleryEndpointUrl": "https://gallery.azure.com/", "managementEndpointUrl": "https://management.core.windows.net/"}, indent=2))' "$DEPLOY_SP_APP_ID" "$DEPLOY_SP_PASSWORD" "$SUBSCRIPTION_ID" "$TENANT_ID"
+  CREDENTIAL_JSON="$(python3 -c 'import json,sys; print(json.dumps({"clientId": sys.argv[1], "clientSecret": sys.argv[2], "subscriptionId": sys.argv[3], "tenantId": sys.argv[4], "activeDirectoryEndpointUrl": "https://login.microsoftonline.com/", "resourceManagerEndpointUrl": "https://management.azure.com/", "activeDirectoryGraphResourceId": "https://graph.windows.net/", "sqlManagementEndpointUrl": "https://management.core.windows.net:8443/", "galleryEndpointUrl": "https://gallery.azure.com/", "managementEndpointUrl": "https://management.core.windows.net/"}, indent=2))' "$DEPLOY_SP_APP_ID" "$DEPLOY_SP_PASSWORD" "$SUBSCRIPTION_ID" "$TENANT_ID")"
   unset DEPLOY_SP_PASSWORD
-  echo
-  echo "Save the JSON above as the AZURE_DEPLOY_CREDENTIALS secret in the resume-bot repo."
-  echo "It is shown only once. Do not store it anywhere else."
 else
   echo "Creating deploy SP '$DEPLOY_SP_NAME' with Contributor on $RESOURCE_GROUP ..."
-  az ad sp create-for-rbac --name "$DEPLOY_SP_NAME" --role Contributor --scopes "$RG_SCOPE" --sdk-auth
-  echo
-  echo "Save the JSON above as the AZURE_DEPLOY_CREDENTIALS secret in the resume-bot repo."
+  CREDENTIAL_JSON="$(az ad sp create-for-rbac --name "$DEPLOY_SP_NAME" --role Contributor --scopes "$RG_SCOPE" --sdk-auth)"
+fi
+
+# Set the AZURE_DEPLOY_CREDENTIALS secret in the repo via gh. Falls back
+# to printing the JSON for manual copy if gh is missing or not authed.
+if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+  echo "$CREDENTIAL_JSON" | gh secret set AZURE_DEPLOY_CREDENTIALS --repo "$GITHUB_REPO"
+  echo "Set AZURE_DEPLOY_CREDENTIALS in $GITHUB_REPO."
+else
+  echo "gh CLI not found or not authenticated. Save the JSON below as the AZURE_DEPLOY_CREDENTIALS secret in $GITHUB_REPO:"
+  echo "$CREDENTIAL_JSON"
   echo "It is shown only once. Do not store it anywhere else."
 fi
+unset CREDENTIAL_JSON
 
 # Ensure the Contributor role assignment exists (idempotent — the
 # create-for-rbac above sets it on a fresh creation; this covers the
@@ -154,8 +164,8 @@ echo "  1. Store the OpenRouterApiKey secret in the new Key Vault (vault URL abo
 echo "     (DirectLineSecret is already stored by this script.)"
 echo "  2. Set the app settings on the new web app:"
 echo "       OPENROUTER_MODEL, DEMO_GATE_NAME, APP_BASE_URL (the new web app URL)."
-echo "  3. Add the AZURE_DEPLOY_CREDENTIALS secret to the resume-bot repo (step 4 above,"
-echo "     if this was a fresh creation or a credential reset)."
+echo "  3. AZURE_DEPLOY_CREDENTIALS is set in the resume-bot repo by this script"
+echo "     (or printed above for manual copy if gh was unavailable)."
 echo "  4. Deploy the code: from the repo root, zip deploy (or wire CI/CD):"
 echo "       az webapp deploy --resource-group $RESOURCE_GROUP --name <webAppName from outputs> --src-path <zip>"
 echo "  5. Health check: https://<webAppName>.azurewebsites.net/health (all five flags true)"
