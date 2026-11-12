@@ -1,8 +1,8 @@
-name: CI
+name: CI / Deploy
 
-# Jobs added as the scaffold lands: test (compileall + pytest, Python 3.14)
-# and deploy (needs test, push-to-main only, AZURE_DEPLOY_CREDENTIALS +
-# /health canary). See docs/resume-bot-agents-sdk-spec.md §6.2.
+# The gate: same checks locally and in CI. Nothing merges on red.
+# Pushes to main that pass tests auto-deploy to the Azure web app.
+# See docs/resume-bot-agents-sdk-spec.md §6.2.
 
 on:
   push:
@@ -10,7 +10,84 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: Byte-compile all sources
+        run: python -m compileall -q app.py agent.py bot_logging.py chat.py config.py
+
+      - name: Run tests
+        run: python -m pytest -q
+
+  deploy:
+    needs: test
+    # Auto-deploy on push to main only — PRs just run tests.
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build deploy zip
+        run: |
+          zip -r /tmp/bot-deploy.zip \
+            app.py agent.py bot_logging.py chat.py config.py \
+            requirements.txt cards webchat profile.md static \
+            -x '*/__pycache__/*'
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_DEPLOY_CREDENTIALS }}
+
+      - name: Deploy to App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: app-resume-bot-jyq4f2yizrb3e
+          package: /tmp/bot-deploy.zip
+
+      - name: Health check canary
+        run: |
+          HEALTH_URL="https://app-resume-bot-jyq4f2yizrb3e.azurewebsites.net/health"
+          for _ in $(seq 1 30); do
+            if curl -sf --max-time 10 "$HEALTH_URL" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 10
+          done
+          HEALTH_JSON=$(curl -s --max-time 15 "$HEALTH_URL" || true)
+          if [ -z "$HEALTH_JSON" ]; then
+            echo "CANARY FAILED — /health did not respond after deploy." >&2
+            exit 1
+          fi
+          echo "$HEALTH_JSON" | python3 -m json.tool
+          echo "$HEALTH_JSON" | python3 -c "
+          import json, sys
+          h = json.load(sys.stdin)
+          flags = ['app_id_configured', 'azure_logging_configured',
+                   'key_vault_configured', 'directline_configured',
+                   'openrouter_configured']
+          bad = [f for f in flags if not h.get(f)]
+          if bad:
+              sys.exit('CANARY FAILED — these flags are false: ' + ', '.join(bad))
+          print('Canary green — all config flags true.')
+          "
+
   ponytail:
     # ponytail.md is a byte-exact copy of upstream's AGENTS.md.
     # On push to main this job fixes staleness itself: it runs

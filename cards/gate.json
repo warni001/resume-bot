@@ -1,0 +1,61 @@
+{
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "actions": [
+    {
+      "title": "Submit",
+      "type": "Action.Execute",
+      "verb": "gate_submit"
+    }
+  ],
+  "backgroundImage": {
+    "fillMode": "cover",
+    "url": "{APP_BASE_URL}/static/card-bg.jpg"
+  },
+  "body": [
+    {
+      "bleed": true,
+      "items": [
+        {
+          "altText": "John Warnicke Avatar",
+          "id": "developerAvatar",
+          "size": "Large",
+          "style": "Person",
+          "type": "Image",
+          "url": "https://avatars.githubusercontent.com/u/76012479?v=4&size=360"
+        },
+        {
+          "color": "dark",
+          "horizontalAlignment": "center",
+          "size": "large",
+          "spacing": "medium",
+          "text": "Developer Verification",
+          "type": "TextBlock",
+          "weight": "bolder",
+          "wrap": true
+        }
+      ],
+      "spacing": "none",
+      "type": "Container"
+    },
+    {
+      "separator": true,
+      "spacing": "medium",
+      "text": "Before we chat: who is the developer of this bot?",
+      "type": "TextBlock",
+      "wrap": true
+    },
+    {
+      "id": "developerName",
+      "placeholder": "Developer name",
+      "type": "Input.Text"
+    },
+    {
+      "id": "email",
+      "placeholder": "Email address",
+      "style": "email",
+      "type": "Input.Text"
+    }
+  ],
+  "type": "AdaptiveCard",
+  "version": "1.4"
+}
