@@ -34,13 +34,17 @@
 #      gain a deployment credential).
 #   5. Deploys infra/main.bicep (App Service F1, Azure Bot F0 + Teams
 #      channel, Key Vault, Storage account for Blob state, Log Analytics
-#      + App Insights).
+#      + App Insights). DEMO_GATE_NAME and OPENROUTER_MODEL are passed as
+#      template parameters from the local .env (repo root, never
+#      committed); absent values warn and deploy as empty.
 #   6. Ensures the Direct Line channel exists on the new bot and stores
 #      its secret in the Key Vault as DirectLineSecret. The secret is
 #      held in a shell variable only and never printed.
 #
 # Re-running is safe: the deployment is incremental. It WILL mint a
 # fresh app password each run and update the Key Vault secret to match.
+# The deployment replaces the whole appSettings collection with the
+# template's set, so always run deploy-bot.sh right after a re-run.
 set -euo pipefail
 
 RESOURCE_GROUP="${RESOURCE_GROUP:-rg-resume-bot}"
@@ -129,11 +133,27 @@ if [ -n "$DEPLOY_SP_APP_ID" ]; then
   fi
 fi
 
+# App settings from the local .env (repo root, never committed): the
+# template owns the whole appSettings set, so absent values deploy as
+# empty rather than leaving the Azure values untouched.
+if [ -f ../.env ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source ../.env
+    set +a
+fi
+if [ -z "${OPENROUTER_MODEL:-}" ]; then
+    echo "warning: OPENROUTER_MODEL not set; deploying it empty (canary will report it)" >&2
+fi
+if [ -z "${DEMO_GATE_NAME:-}" ]; then
+    echo "warning: DEMO_GATE_NAME not set; deploying it empty (gate will be off)" >&2
+fi
+
 echo "Deploying infra/main.bicep ..."
 RESULT="$(az deployment group create \
   --resource-group "$RESOURCE_GROUP" \
   --template-file main.bicep \
-  --parameters baseName="$BASE_NAME" microsoftAppId="$APP_ID" microsoftAppPassword="$APP_PASSWORD" microsoftAppTenantId="$TENANT_ID" \
+  --parameters baseName="$BASE_NAME" microsoftAppId="$APP_ID" microsoftAppPassword="$APP_PASSWORD" microsoftAppTenantId="$TENANT_ID" demoGateName="${DEMO_GATE_NAME:-}" openRouterModel="${OPENROUTER_MODEL:-}" \
   --query properties.outputs -o json)"
 unset APP_PASSWORD
 
@@ -174,10 +194,11 @@ echo
 echo "Next steps:"
 echo "  1. Store the OpenRouterApiKey secret in the new Key Vault (vault URL above)."
 echo "     (DirectLineSecret is already stored by this script.)"
-echo "  2. Set the app settings on the new web app:"
-echo "       OPENROUTER_MODEL, DEMO_GATE_NAME, APP_BASE_URL (the new web app URL)."
-echo "  3. AZURE_DEPLOY_CREDENTIALS is set in the resume-bot repo by this script"
+echo "  2. App settings live in main.bicep: APP_BASE_URL is derived from the web"
+echo "     app name, and DEMO_GATE_NAME / OPENROUTER_MODEL were passed from the"
+echo "     local .env (warned above if absent). A re-run replaces the whole set."
+echo "  3. Run ./infra/deploy-bot.sh from the repo root. Whenever deploy.sh is run"
+echo "     locally, deploy-bot.sh also needs to be run locally: it re-applies the"
+echo "     two settings from .env, redeploys the code, and runs the /health canary."
+echo "  4. AZURE_DEPLOY_CREDENTIALS is set in the resume-bot repo by this script"
 echo "     (or printed above for manual copy if gh was unavailable)."
-echo "  4. Deploy the code: from the repo root, zip deploy (or wire CI/CD):"
-echo "       az webapp deploy --resource-group $RESOURCE_GROUP --name <webAppName from outputs> --src-path <zip>"
-echo "  5. Health check: https://<webAppName>.azurewebsites.net/health (all five flags true)"

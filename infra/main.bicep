@@ -38,6 +38,12 @@ param microsoftAppPassword string
 @description('Tenant ID of the directory that owns the app registration (SingleTenant bots). Passed by deploy.sh from az account show.')
 param microsoftAppTenantId string
 
+@description('Demo gate answer (DEMO_GATE_NAME). Passed by deploy.sh from the local .env; empty means the gate is off.')
+param demoGateName string = ''
+
+@description('OpenRouter model ID (OPENROUTER_MODEL). Passed by deploy.sh from the local .env; empty means chat stays off until set.')
+param openRouterModel string = ''
+
 var suffix = uniqueString(resourceGroup().id)
 var planName = 'plan-${baseName}'
 var webAppName = 'app-${baseName}-${suffix}'
@@ -95,6 +101,14 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
         {
           name: 'APP_BASE_URL'
           value: 'https://${webAppName}.azurewebsites.net'
+        }
+        {
+          name: 'DEMO_GATE_NAME'
+          value: demoGateName
+        }
+        {
+          name: 'OPENROUTER_MODEL'
+          value: openRouterModel
         }
       ]
     }
