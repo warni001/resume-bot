@@ -67,7 +67,7 @@ Test with the Agents Playground: `agentsplayground -e "http://localhost:3978/api
 .venv/bin/python -m pytest -q   # must pass before any commit
 ```
 
-CI runs `compileall` + `pytest` on every push/PR to `main`, and auto-deploys pushes to `main` (zip deploy + `/health` canary: all five config flags must be true). `infra/deploy-bot.sh` does the same redeploy from a machine with the Azure CLI.
+CI runs `compileall` + `pytest` on every push/PR to `main`, and auto-deploys pushes to `main` (zip deploy + `/health` canary: all five config flags must be true). `infra/deploy-bot.sh` does the same redeploy from a machine with the Azure CLI, and also applies `DEMO_GATE_NAME` and `OPENROUTER_MODEL` from the local `.env` (warn-and-skip if absent); `APP_BASE_URL` is declared in `infra/main.bicep`, and the CI job does not manage app settings.
 
 ## Conventions
 
