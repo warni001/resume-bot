@@ -32,7 +32,11 @@ from aiohttp import ClientSession, web
 from aiohttp.web import Request, Response, json_response, middleware
 from microsoft_agents.activity import load_configuration_from_env
 from microsoft_agents.authentication.msal import MsalConnectionManager
-from microsoft_agents.hosting.aiohttp import CloudAdapter, start_agent_process
+from microsoft_agents.hosting.aiohttp import (
+    CloudAdapter,
+    jwt_authorization_decorator,
+    start_agent_process,
+)
 from microsoft_agents.hosting.core import Authorization, MemoryStorage
 from microsoft_agents.storage.blob import BlobStorage, BlobStorageConfig
 
@@ -114,7 +118,13 @@ async def error_middleware(request: Request, handler):
         return json_response({"error": "internal server error"}, status=500)
 
 
+@jwt_authorization_decorator
 async def messages(req: Request) -> Response:
+    """Channel-service activities. JWT-protected: without the SDK's
+    authorization decorator the request carries no claims identity, the
+    turn runs anonymous, and outbound sends go out unauthenticated
+    (Direct Line 401s them). Only this route is protected; /health,
+    /demo, /api/directline/token and /static/ stay open."""
     response = await start_agent_process(req, AGENT_APP, ADAPTER)
     return response if response is not None else Response(status=201)
 
@@ -180,6 +190,11 @@ async def health(req: Request) -> Response:
 
 def create_app() -> web.Application:
     app = web.Application(middlewares=[error_middleware])
+    # The JWT decorator reads the agent auth configuration from here to
+    # validate inbound channel-service tokens.
+    app["agent_configuration"] = (
+        CONNECTION_MANAGER.get_default_connection_configuration()
+    )
     app.router.add_post("/api/messages", messages)
     app.router.add_get("/health", health)
     app.router.add_get("/api/directline/token", directline_token)
