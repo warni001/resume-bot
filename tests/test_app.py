@@ -143,3 +143,32 @@ def test_create_app_registers_routes():
     assert "/demo" in paths
     # static/ ships with the repo, so /static/ is served.
     assert "/static" in paths
+
+
+def test_create_app_sets_agent_configuration():
+    # The JWT decorator reads this to validate inbound tokens; without
+    # it, /api/messages 500s on every channel-service call.
+    application = create_app()
+    assert application["agent_configuration"] is (
+        app.CONNECTION_MANAGER.get_default_connection_configuration()
+    )
+
+
+async def test_messages_without_auth_header_401():
+    # No Authorization header and anonymous auth off: the JWT
+    # decorator rejects before the turn runs. (A stub request is
+    # enough — the decorator only touches .headers and .app.)
+    from types import SimpleNamespace
+
+    from app import messages
+
+    stub = SimpleNamespace(
+        headers={},
+        app={
+            "agent_configuration": (
+                app.CONNECTION_MANAGER.get_default_connection_configuration()
+            )
+        },
+    )
+    resp = await messages(stub)
+    assert resp.status == 401
