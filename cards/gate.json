@@ -3,8 +3,7 @@
   "actions": [
     {
       "title": "Submit",
-      "type": "Action.Execute",
-      "verb": "gate_submit"
+      "type": "Action.Submit"
     }
   ],
   "backgroundImage": {

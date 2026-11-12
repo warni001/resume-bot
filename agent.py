@@ -9,8 +9,9 @@ turn (the framework handles it); handlers only read/write TurnState.
 
 Routes, in evaluation order (first match wins):
   conversation_update("membersAdded") — welcome + gate card.
-  adaptive_card.action_execute("gate_submit") — gate card submits.
-  activity("message", rank=RouteRank.LAST) — the catch-all chat path.
+  activity("message", rank=RouteRank.LAST) — gate submits (Action.Submit
+    arrives as a message carrying the inputs in its value payload) and
+    the catch-all chat path.
   error — the top-level error handler; never throws.
 """
 
@@ -22,11 +23,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from microsoft_agents.activity import (
-    AdaptiveCardInvokeResponse,
-    Attachment,
-    ContentTypes,
-)
+from microsoft_agents.activity import Attachment
 from microsoft_agents.hosting.core import (
     AgentApplication,
     MessageFactory,
@@ -53,12 +50,8 @@ GATE_INPUT_ID = "developerName"
 # the identity key is from.id. The id is the card designer's call.
 GATE_EMAIL_ID = "email"
 
-# Verb on the gate card's Action.Execute, routing the invoke to the
-# gate handler below.
-GATE_VERB = "gate_submit"
-
-# Greeting sent on joining and on passing the gate (John's wording,
-# carried over from the old bot).
+# Greeting sent on joining (John's wording, carried over from the old
+# bot).
 GREETING = (
     "Welcome to ResumeBot!<br>"
     "I can tell you about my creator's professional experience,<br> "
@@ -212,23 +205,24 @@ def create_agent_app(
                     MessageFactory.attachment(_gate_attachment())
                 )
 
-    @app.adaptive_card.action_execute(GATE_VERB)
-    async def _on_gate_submit(
-        context: TurnContext, state: TurnState, data: object
-    ) -> AdaptiveCardInvokeResponse:
-        """Gate card submit (Action.Execute invoke).
+    async def _handle_gate(
+        context: TurnContext, state: TurnState, dims: dict[str, Any]
+    ) -> None:
+        """Challenge/response gate for the public demo.
 
+        Card submits arrive as the activity's value payload, never as
+        chat text, so a wrong answer never echoes in the transcript.
         The comparison is forgiving (trimmed, case-insensitive on both
         sides): this is a screen door against drive-bys, not
-        authentication. A wrong answer never echoes in the transcript.
+        authentication.
         """
-        dims = _turn_dimensions(context)
-        values = data if isinstance(data, dict) else {}
+        value = getattr(context.activity, "value", None)
+        values = value if isinstance(value, dict) else {}
         raw_answer = values.get(GATE_INPUT_ID)
         answer = raw_answer if isinstance(raw_answer, str) else ""
         raw_email = values.get(GATE_EMAIL_ID)
         email = raw_email if isinstance(raw_email, str) else ""
-        if gate_name and gate_answer_matches(answer, gate_name):
+        if gate_answer_matches(answer, gate_name):
             state.conversation.set_value("demo_authorized", True)
             if email.strip():
                 state.user.set_value("email", email.strip())
@@ -241,16 +235,17 @@ def create_agent_app(
                     }
                 },
             )
-            await context.send_activity(MessageFactory.text(GREETING))
-            return AdaptiveCardInvokeResponse(status_code=200)
+            await context.send_activity(
+                MessageFactory.text("You're in — ask me anything.")
+            )
+            return
+        if value is not None:
+            # A card submit with a wrong answer: say so, then re-prompt.
+            await context.send_activity(
+                MessageFactory.text("Not quite — try again.")
+            )
         await context.send_activity(
-            MessageFactory.text("Not quite — try again.")
-        )
-        # Re-show the card in place so the visitor can retry.
-        return AdaptiveCardInvokeResponse(
-            status_code=200,
-            type=ContentTypes.adaptive_card,
-            value=gate_card(base_url),
+            MessageFactory.attachment(_gate_attachment())
         )
 
     @app.activity("message", rank=RouteRank.LAST)
@@ -264,9 +259,7 @@ def create_agent_app(
             state.conversation.get_value("demo_authorized", lambda: False)
         )
         if gate_name and not authorized:
-            await context.send_activity(
-                MessageFactory.attachment(_gate_attachment())
-            )
+            await _handle_gate(context, state, dims)
             return
 
         # A card submitted after unlocking carries a value but no text;

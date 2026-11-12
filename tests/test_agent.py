@@ -150,8 +150,8 @@ def test_gate_card_raises_without_developer_name_input(monkeypatch):
 
 def test_routes_registered():
     app = make_app()
-    # message catch-all + membersAdded + Action.Execute gate handler.
-    assert len(list(app._route_list)) >= 3
+    # message catch-all (gate submits + chat) + membersAdded.
+    assert len(list(app._route_list)) >= 2
 
 
 # ----------------------------------------------------------------------
@@ -196,43 +196,37 @@ async def test_members_added_skips_bot_itself():
 
 
 # ----------------------------------------------------------------------
-# Gate submit (Action.Execute invoke)
+# Gate submit (Action.Submit message carrying the inputs in value)
 # ----------------------------------------------------------------------
 
-def _gate_invoke_activity(answer, email="tester@example.com"):
+def _gate_submit_activity(answer, email="tester@example.com"):
     return _activity(
-        type="invoke",
-        name="adaptiveCard/action",
-        value={
-            "action": {
-                "type": "Action.Execute",
-                "verb": "gate_submit",
-                "data": {GATE_INPUT_ID: answer, "email": email},
-            }
-        },
+        type="message",
+        text="",
+        value={GATE_INPUT_ID: answer, "email": email},
     )
 
 
-async def test_gate_submit_correct_answer_passes_and_greets():
+async def test_gate_submit_correct_answer_passes_and_confirms():
     adapter = CapturingAdapter()
     app = make_app()
-    await app.on_turn(_turn(adapter, _gate_invoke_activity("John Warnicke")))
-    assert any("Welcome" in t for t in _texts(adapter))
+    await app.on_turn(_turn(adapter, _gate_submit_activity("John Warnicke")))
+    assert any("You're in" in t for t in _texts(adapter))
 
 
 async def test_gate_submit_forgiving_comparison():
     adapter = CapturingAdapter()
     app = make_app()
     await app.on_turn(
-        _turn(adapter, _gate_invoke_activity("  john warnicke "))
+        _turn(adapter, _gate_submit_activity("  john warnicke "))
     )
-    assert any("Welcome" in t for t in _texts(adapter))
+    assert any("You're in" in t for t in _texts(adapter))
 
 
 async def test_gate_submit_wrong_answer_reprompts_without_echo():
     adapter = CapturingAdapter()
     app = make_app()
-    await app.on_turn(_turn(adapter, _gate_invoke_activity("John Wick")))
+    await app.on_turn(_turn(adapter, _gate_submit_activity("John Wick")))
     texts = _texts(adapter)
     assert any("Not quite" in t for t in texts)
     assert not any("John Wick" in t for t in texts)
@@ -243,7 +237,7 @@ async def test_gate_submit_wrong_answer_keeps_gate_closed(monkeypatch):
     fake_chat = AsyncMock(return_value=("reply", "model"))
     monkeypatch.setattr(agent_module, "openrouter_chat", fake_chat)
     app = make_app(openrouter_api_key="k", openrouter_model="m")
-    await app.on_turn(_turn(adapter, _gate_invoke_activity("John Wick")))
+    await app.on_turn(_turn(adapter, _gate_submit_activity("John Wick")))
     await app.on_turn(_turn(adapter, _activity(type="message", text="hello")))
     fake_chat.assert_not_called()
     assert _attachments(adapter), "gate card re-sent while unauthorized"
@@ -271,7 +265,7 @@ async def test_chat_reply_sent_with_model_suffix_after_gate(monkeypatch):
 
     monkeypatch.setattr(agent_module, "openrouter_chat", fake_chat)
     app = make_app(openrouter_api_key="k", openrouter_model="test-model:free")
-    await app.on_turn(_turn(adapter, _gate_invoke_activity(GATE_NAME)))
+    await app.on_turn(_turn(adapter, _gate_submit_activity(GATE_NAME)))
     adapter.sent.clear()
     await app.on_turn(_turn(adapter, _activity(type="message", text="hi")))
     assert _texts(adapter) == ["Hello back.\n\n— via test-model:free"]
@@ -287,7 +281,7 @@ async def test_chat_history_persists_across_turns_without_cap(monkeypatch):
     monkeypatch.setattr(agent_module, "openrouter_chat", fake_chat)
     app = make_app(openrouter_api_key="k", openrouter_model="m")
     adapter = CapturingAdapter()
-    await app.on_turn(_turn(adapter, _gate_invoke_activity(GATE_NAME)))
+    await app.on_turn(_turn(adapter, _gate_submit_activity(GATE_NAME)))
     # Five exchanges: history must hold all ten entries (no 8-entry cap).
     for i in range(5):
         await app.on_turn(_turn(adapter, _activity(type="message", text=f"q{i}")))
@@ -307,7 +301,7 @@ async def test_chat_failure_falls_back_to_error_message(monkeypatch):
     monkeypatch.setattr(agent_module, "openrouter_chat", failing_chat)
     adapter = CapturingAdapter()
     app = make_app(openrouter_api_key="k", openrouter_model="m")
-    await app.on_turn(_turn(adapter, _gate_invoke_activity(GATE_NAME)))
+    await app.on_turn(_turn(adapter, _gate_submit_activity(GATE_NAME)))
     adapter.sent.clear()
     await app.on_turn(_turn(adapter, _activity(type="message", text="hi")))
     assert _texts(adapter) == [CHAT_ERROR_MESSAGE]
@@ -338,7 +332,7 @@ async def test_value_without_text_stays_silent_after_unlock(monkeypatch):
     monkeypatch.setattr(agent_module, "openrouter_chat", fake_chat)
     adapter = CapturingAdapter()
     app = make_app(openrouter_api_key="k", openrouter_model="m")
-    await app.on_turn(_turn(adapter, _gate_invoke_activity(GATE_NAME)))
+    await app.on_turn(_turn(adapter, _gate_submit_activity(GATE_NAME)))
     adapter.sent.clear()
     await app.on_turn(
         _turn(adapter, _activity(type="message", text="", value={"x": 1}))

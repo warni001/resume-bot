@@ -80,7 +80,7 @@ These are the structural differences that shape the code. They are design constr
   - `@AGENT_APP.conversation_update("membersAdded")` — the welcome / gate-card trigger.
   - `@AGENT_APP.error` — the top-level error handler (replaces the old `on_turn_error`).
   - Route evaluation stops at the first match by default. The catch-all message handler **must** be registered with `rank=RouteRank.LAST` so fixed commands and regex routes are tried first.
-- **Adaptive Card submits: `Action.Submit` vs `Action.Execute`.** The action type decides how the submit arrives. `Action.Submit` arrives as a **message** activity carrying a value payload (this is what the old bot's gate card used, and the old bot read it from the message). `Action.Execute` (Universal Actions) arrives as an **invoke** activity with `activity.name == "adaptiveCard/action"`. The new gate card uses `Action.Execute`, so the gate must register an **invoke route** for the submit. (Verify the exact invoke name and payload shape against the installed 1.9.0 package during the build — do not trust the docs' naming, which has drifted before.)
+- **Adaptive Card submits: `Action.Submit` vs `Action.Execute`.** The action type decides how the submit arrives. `Action.Submit` arrives as a **message** activity carrying a value payload (this is what the old bot's gate card used, and the old bot read it from the message). `Action.Execute` (Universal Actions) arrives as an **invoke** activity with `activity.name == "adaptiveCard/action"`. The gate card uses `Action.Submit`, so the gate check runs in the message handler. (`Action.Execute` was specified originally, then reverted Nov 12, 2026: WebChat 4.19.2's `AdaptiveCardRenderer` handles only `Action.OpenUrl` and `Action.Submit` and drops `Action.Execute` with "received unknown action from Adaptive Cards" — the submit never reaches the bot. Verified against the WebChat source and live in the demo.)
 - **Turn state is explicit.** `TurnState` carries conversation state and user state; the agent reads/writes them through the state object, not through `ConversationState`/`UserState` property accessors as in the BF SDK.
 - **Auth configuration is env-driven.** The SDK loads its connection settings from environment variables (`load_configuration_from_env`). The exact env var names for the app ID, password, and tenant in 1.9.0 must be verified against the installed package and mapped to the existing vault secrets (§5.7). Do not assume the BF SDK's env var names carry over.
 - **Error handling is a route.** `@AGENT_APP.error` registers a handler taking `(context, error)`. The old bot's `on_turn_error` (adapter-level, guarded per-step so it never throws) has no direct equivalent — the error route must itself never throw, and must send a safe fallback message to the user.
@@ -105,9 +105,9 @@ resume-bot/
 ├── profile.md              # About John Warnicke. Content outside code. Carried over
 │                           #   from the old bot (same text, re-approved by John).
 ├── cards/
-│   └── gate.json           # Demo gate Adaptive Card (v1.3). John's design. Updated to
-│                           #   Action.Execute with the email field (old bot used
-│                           #   Action.Submit + message value payload).
+│   └── gate.json           # Demo gate Adaptive Card (v1.4). John's design.
+│                           #   Action.Submit + email field (Action.Execute was
+│                           #   tried and reverted — WebChat drops it).
 ├── static/
 │   └── card-bg.jpg         # Gate card background image. Carried over.
 ├── webchat/
@@ -164,13 +164,13 @@ v1 is the smallest complete rebuild: the bot works end-to-end in the demo and in
 
 ### 5.2 Demo gate — Adaptive Card challenge (screen door, not a lock)
 
-- **What:** When a user joins the conversation (`membersAdded`), the bot sends the gate card (from `cards/gate.json`, v1.3) asking for the developer name **and an email address**. Until the submitted answer matches `DEMO_GATE_NAME`, no message reaches chat. Wrong answers are rejected without echoing the attempt in the transcript.
+- **What:** When a user joins the conversation (`membersAdded`), the bot sends the gate card (from `cards/gate.json`, v1.4) asking for the developer name **and an email address**. Until the submitted answer matches `DEMO_GATE_NAME`, no message reaches chat. Wrong answers are rejected without echoing the attempt in the transcript.
 - **Identity key:** The email collected by the gate is the user identity key in WebChat/DirectLine (where there is no stable user ID). It keys the Blob user state and is logged (with timestamp) so John can see who has used the bot. In Teams, the identity key is `from.id` (Entra ID). The email is self-reported (ostensibly) — no verification; it is a screen door, not a vault.
-- **Card submit is an invoke activity** (`adaptiveCard/action`) — the new gate card uses `Action.Execute` (not the old bot's `Action.Submit`). See §4.2. The gate registers an invoke route for it. The old bot's gate used `Action.Submit` and its submit arrived as a message value payload; the new behavior is invoke-based.
+- **Card submit is a message activity** carrying the inputs in its value payload — the gate card uses `Action.Submit` (the old bot's pattern). See §4.2. The gate check runs in the message handler; there is no invoke route.
 - **Comparison:** Strip **both** sides (submitted answer and configured name) and `.casefold()` both. (Fixes the old bot's strip bug — decision #5.)
-- **Card content:** `cards/gate.json` is John's design. The build carries it over, updated to `Action.Execute` with the email field. The card's `GATE_INPUT_ID = "developerName"` is the contract — the JSON must contain an `Input.Text` with that id, validated at load (raises if missing). (The email input's id is John's call as part of the card design.)
+- **Card content:** `cards/gate.json` is John's design. The build carries it over with the email field added; the submit action is `Action.Submit` (see §4.2). The card's `GATE_INPUT_ID = "developerName"` is the contract — the JSON must contain an `Input.Text` with that id, validated at load (raises if missing). (The email input's id is John's call as part of the card design.)
 - **Background image:** The card references `{APP_BASE_URL}/static/card-bg.jpg` via `backgroundImage` at the card top level, `fillMode: "cover"`. The app serves `/static/` from the repo's `static/` directory. `APP_BASE_URL` comes from the app setting (already set in Azure) or local env.
-- **Welcome message:** On a correct answer, the bot replies with the greeting (John's current wording, carried over): "Welcome to ResumeBot! … I can tell you about my creator's professional experience, as well as converse on any other topic. I currently operate in webchat and Microsoft Teams." (John owns the wording; the test pins only that a greeting is sent, not the exact text.)
+- **Gate-pass message:** On a correct answer, the bot replies "You're in — ask me anything." (John owns the wording; the test pins only that a confirmation is sent, not the exact text.) The greeting itself is sent on `membersAdded`, not on passing.
 
 ### 5.3 Direct Line token endpoint + /demo page
 
@@ -291,7 +291,7 @@ The new resources mirror the old shape (new resource group, new web app, new vau
 ## 7. Testing
 
 - **Framework:** `pytest`, run as `.venv/bin/python -m pytest -q`. Tests must pass before any commit. CI runs them on every push/PR.
-- **Coverage target:** Same bar as the old bot (33 tests, all passing). New tests for: route registration (gate, message, invoke, error), the invoke-based card submit (`Action.Execute` / `adaptiveCard/action`), the strip-both-sides comparison, the email identity key (WebChat) vs `from.id` (Teams), Blob storage state (history persists, no artificial cap, conversation scope), the `/health` flags, the token endpoint's 503/502 behaviour, the OTel dimension fix (no hardcoded `channel`), the `static/`-missing startup guard.
+- **Coverage target:** Same bar as the old bot (33 tests, all passing). New tests for: route registration (gate, message, error), the message-based card submit (`Action.Submit` value payload), the strip-both-sides comparison, the email identity key (WebChat) vs `from.id` (Teams), Blob storage state (history persists, no artificial cap, conversation scope), the `/health` flags, the token endpoint's 503/502 behaviour, the OTel dimension fix (no hardcoded `channel`), the `static/`-missing startup guard.
 - **Test for the greeting:** Assert only that a greeting is sent (wording is John's; the test pins that a greeting is sent, then the card, then nothing) — so future wording tweaks don't break CI. (Lesson from the old bot's Nov 1 CI failure.)
 - **Local test loop:** `python app.py` on `:3978`. Agents Playground (`agentsplayground -e "http://localhost:3978/api/messages" -c "emulator"`) or the Bot Framework Emulator (4.14.1, renders cards poorly — preview cards in the Adaptive Cards designer or WebChat instead). Once the Teams license is live, iterate via ngrok / Azure Dev Tunnels pointing the Azure Bot endpoint at `localhost:3978`.
 
@@ -313,7 +313,7 @@ The new resources mirror the old shape (new resource group, new web app, new vau
 
 1. **Spec approved** (this document). John reviews, edits, approves.
 2. **Repo created** (John or assistant, after decision #1). Public. `AZURE_DEPLOY_CREDENTIALS` secret added (decision #7).
-3. **Scaffold:** repo layout (§4.3), `requirements.txt` (SDK 1.9.0 pinned, incl. storage-blob), `config.py` + new Key Vault, `bot_logging.py` (with the dimension fix), `app.py` (routes + `/health`), `agent.py` (routes registered, gate + invoke route + chat dispatch, Blob state), `chat.py` + `profile.md`, `cards/gate.json` (Action.Execute + email field), `webchat/index.html`, `static/card-bg.jpg`. Tests green.
+3. **Scaffold:** repo layout (§4.3), `requirements.txt` (SDK 1.9.0 pinned, incl. storage-blob), `config.py` + new Key Vault, `bot_logging.py` (with the dimension fix), `app.py` (routes + `/health`), `agent.py` (routes registered, gate + chat dispatch, Blob state), `chat.py` + `profile.md`, `cards/gate.json` (Action.Submit + email field, v1.4), `webchat/index.html`, `static/card-bg.jpg`. Tests green.
 4. **Tooling:** `infra/deploy-bot.sh`, CI (test/deploy/ponytail), Ponytail sync + AGENTS.md generation, `.python-version`, README.
 5. **Deploy to the new web app.** `/health` all five true. Token endpoint 200. `/demo` serves.
 6. **End-to-end verification:** gate card renders, wrong answer rejected, right answer passes (email captured as identity key), chat answers from the profile, history persists in Blob storage, `— via <model>` suffix present, logs in App Insights with the corrected dimensions.
@@ -327,7 +327,7 @@ These are the things most likely to bite. Each must be verified during the build
 
 - [ ] **SDK env var names.** The exact env vars 1.9.0 expects for app ID / password / tenant. Read the installed package.
 - [ ] **SDK API names.** Every `AgentApplication` method, `RouteRank` value, and error-handler name verified against the installed 1.9.0 package. Docs have drifted before.
-- [ ] **Invoke activity for card submit.** The gate's submit path is an invoke route (`adaptiveCard/action`) because the new gate card uses `Action.Execute` (not the old bot's `Action.Submit`). Verify the activity name and payload shape in 1.9.0.
+- [x] **Card submit path decided.** `Action.Submit` (message value payload) — `Action.Execute` was specified, then reverted Nov 12 after WebChat 4.19.2 proved to drop Execute actions. No invoke route.
 - [ ] **Blob storage state + identity key.** Conversation history and user state persist in Blob storage (`microsoft-agents-storage-blob`). Identity key is the gate-collected email (WebChat/DirectLine) or `from.id` (Teams/Entra ID). Verify the storage connection string's env var name against installed 1.9.0.
 - [ ] **Key Vault role assignment + service principals.** Both SPs (app registration SP and `github-resume-bot-deploy` SP) must exist before the first deploy (Oct 30 lesson). Both are idempotent steps in `deploy.sh` (not manual, not in CI). Verify both exist after the first provisioning run, plus the Key Vault Secrets User role assignment for the web app's managed identity.
 - [ ] **`AZURE_DEPLOY_CREDENTIALS` in the new repo.** CI deploy cannot run without it (decision #7). It lives only in the repo secret — no backup copy anywhere.
