@@ -21,7 +21,7 @@ Check what everyone else does first. Follow the established convention. Use good
 - Config lives in config, not code. No model IDs, secrets, or environment-specific values hardcoded. Model ID only in `OPENROUTER_MODEL`.
 - State: Blob storage. Identity key is the gate email (WebChat) or `from.id` (Teams). History persists, no cap, conversation scope. `agent.py` never depends on the backend; state saves in the turn.
 - The agent is an `AgentApplication[TurnState]` instance. Behaviour is registered as routes, not overridden methods. Catch-all message handler uses `rank=RouteRank.LAST`. The error route (`@AGENT_APP.error`) must never throw.
-- Gate card uses `Action.Execute` — the submit arrives as an invoke activity (`adaptiveCard/action`), not a message. Strip both sides and `.casefold()` both when comparing the submitted answer to `DEMO_GATE_NAME`.
+- Gate card uses `Action.Submit` — the submit arrives as a message activity carrying the inputs in its `value` payload, and the gate check runs in the message handler. (WebChat 4.19.2 drops `Action.Execute`.) Strip both sides and `.casefold()` both when comparing the submitted answer to `DEMO_GATE_NAME`.
 - SDK API names drift. Verify every name against the installed 1.9.0 package before using it. Never copy a name from the docs.
 - Never assume a field exists in an external API response. Guard nullable/missing fields before use.
 - Log-loop guard: `setup_logging()` quiets the `azure` logger to WARNING. No hardcoded `channel` dimension — filter traces on `channel_id` only.
