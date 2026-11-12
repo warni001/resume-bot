@@ -18,6 +18,37 @@ ZIP_PATH="/tmp/bot-deploy.zip"
 
 git pull --rebase
 
+# App settings from the local .env (never committed): DEMO_GATE_NAME and
+# OPENROUTER_MODEL are applied on every deploy so the Azure config tracks
+# the local source of truth. Absent values warn and skip — the canary
+# reports a missing model, and a missing gate name just means no gate
+# card. APP_BASE_URL is declared in main.bicep, not set here.
+if [ -f .env ]; then
+    set -a
+    # shellcheck disable=SC1091
+    source .env
+    set +a
+fi
+SETTINGS=()
+if [ -n "${OPENROUTER_MODEL:-}" ]; then
+    SETTINGS+=("OPENROUTER_MODEL=${OPENROUTER_MODEL}")
+else
+    echo "warning: OPENROUTER_MODEL not set; skipping (canary will report it)" >&2
+fi
+if [ -n "${DEMO_GATE_NAME:-}" ]; then
+    SETTINGS+=("DEMO_GATE_NAME=${DEMO_GATE_NAME}")
+else
+    echo "warning: DEMO_GATE_NAME not set; skipping (gate will be off)" >&2
+fi
+if [ "${#SETTINGS[@]}" -gt 0 ]; then
+    az webapp config appsettings set \
+        -g "$RESOURCE_GROUP" \
+        -n "$WEBAPP_NAME" \
+        --settings "${SETTINGS[@]}" \
+        -o none
+    echo "Applied app settings from .env."
+fi
+
 rm -f "$ZIP_PATH"
 zip -r "$ZIP_PATH" \
     app.py agent.py bot_logging.py chat.py config.py \
