@@ -34,7 +34,7 @@
 #      gain a deployment credential).
 #   5. Deploys infra/main.bicep (App Service F1, Azure Bot F0 + Teams
 #      channel, Key Vault, Storage account for Blob state, Log Analytics
-#      + App Insights). DEMO_GATE_NAME and OPENROUTER_MODEL are passed as
+#      + App Insights, Speech Services F0). DEMO_GATE_NAME and OPENROUTER_MODEL are passed as
 #      template parameters from the local .env (repo root, never
 #      committed); absent values warn and deploy as empty.
 #   6. Ensures the Direct Line channel exists on the new bot and stores

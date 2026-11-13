@@ -20,12 +20,13 @@ Other vault secrets keep their names:
     ApplicationInsightsConnectionString  -> APPLICATIONINSIGHTS_CONNECTION_STRING
     OpenRouterApiKey                     -> OPENROUTER_API_KEY
     DirectLineSecret                     -> DIRECTLINE_SECRET
+    SpeechKey                            -> SPEECH_KEY
     BlobStorageConnectionString          -> BLOB_STORAGE_CONNECTION_STRING
 
 The demo gate name (DEMO_GATE_NAME) is NOT a secret — it is the
 developer's name, asked for on a challenge card — so it lives in env /
 App Settings only, never in Key Vault. OPENROUTER_MODEL, DEMO_GATE_NAME,
-and APP_BASE_URL are app settings, not vault secrets.
+APP_BASE_URL, and SPEECH_REGION are app settings, not vault secrets.
 """
 
 from __future__ import annotations
@@ -56,6 +57,7 @@ _VAULT_SECRETS = {
     ),
     "OpenRouterApiKey": ("openrouter_api_key", "OPENROUTER_API_KEY"),
     "DirectLineSecret": ("directline_secret", "DIRECTLINE_SECRET"),
+    "SpeechKey": ("speech_key", "SPEECH_KEY"),
     "BlobStorageConnectionString": (
         "blob_storage_connection_string",
         "BLOB_STORAGE_CONNECTION_STRING",
@@ -90,6 +92,10 @@ class BotConfig:
     demo_gate_name: str = ""  # DEMO_GATE_NAME; empty disables the gate
     directline_secret: str = ""
     app_base_url: str = ""  # APP_BASE_URL, e.g. https://<app>.azurewebsites.net
+
+    # Demo voice (optional; off unless configured)
+    speech_key: str = ""  # SpeechKey vault secret
+    speech_region: str = ""  # SPEECH_REGION app setting, e.g. westus3
 
     @classmethod
     def from_env(cls, load_vault: bool = True) -> "BotConfig":
@@ -129,6 +135,8 @@ class BotConfig:
             demo_gate_name=os.getenv("DEMO_GATE_NAME", ""),
             directline_secret=os.getenv("DIRECTLINE_SECRET", ""),
             app_base_url=os.getenv("APP_BASE_URL", ""),
+            speech_key=os.getenv("SPEECH_KEY", ""),
+            speech_region=os.getenv("SPEECH_REGION", ""),
         )
         if load_vault and cfg.key_vault_url:
             cfg._load_from_key_vault()

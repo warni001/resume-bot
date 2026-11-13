@@ -16,6 +16,7 @@ A Microsoft Teams resume bot built on the M365 Agents SDK (Python). The bot *is*
 | Auth | MSAL, SingleTenant; connection settings from env / Key Vault |
 | State | Azure Blob storage (`microsoft-agents-storage-blob`); full conversation history, no cap |
 | LLM | OpenRouter, model from config only (`OPENROUTER_MODEL`) |
+| Voice | Azure AI Speech F0: `/api/speech/token` mints short-lived tokens; STT/TTS live in the demo page only |
 | Logging | OpenTelemetry → Azure Monitor (Application Insights) |
 | Secrets | Env / `.env` locally; Azure Key Vault in prod (no secrets in the repo) |
 | Hosting | Azure App Service F1 (free), Azure Bot F0 |
@@ -26,16 +27,16 @@ Every SDK name in this codebase was verified against the installed 1.9.0 package
 
 ```
 app.py              # aiohttp app: /api/messages, /health, /demo,
-                    #   /api/directline/token, /static/
+                    #   /api/directline/token, /api/speech/token, /static/
 agent.py            # AgentApplication, routes, gate logic, chat dispatch
 chat.py             # OpenRouter client (system prompt + profile + history)
 config.py           # env/.env first, Key Vault overrides
 bot_logging.py      # OTel → Azure Monitor, custom dimensions (NOT logging.py)
 profile.md          # About John Warnicke — content outside code
 cards/gate.json     # Demo gate Adaptive Card (Action.Execute + email field)
-webchat/index.html  # /demo page (WebChat 4.19.2 pinned)
+webchat/index.html  # /demo page (WebChat 4.19.2 + Speech SDK 1.53.0 pinned)
 static/card-bg.jpg  # Gate card background image
-tests/              # pytest, 59 tests
+tests/              # pytest, 66 tests
 infra/              # main.bicep, deploy.sh (provisioning), deploy-bot.sh (redeploy)
 ```
 
@@ -57,6 +58,7 @@ Configuration comes from env vars or a `.env` file (never committed):
 | `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | Chat backend (model ID lives only here) |
 | `DEMO_GATE_NAME` | Gate answer; unset disables the gate |
 | `APP_BASE_URL` | Public base URL, for the gate card's background image |
+| `SPEECH_REGION` | Speech region for the voice token endpoint (set by bicep from the deployment location) |
 | `BLOB_STORAGE_CONNECTION_STRING` | State backend; unset falls back to in-memory storage |
 
 Test with the Agents Playground: `agentsplayground -e "http://localhost:3978/api/messages" -c "emulator"`. Preview cards in the Adaptive Cards designer or WebChat, not the old Emulator (it renders cards poorly).
@@ -67,7 +69,7 @@ Test with the Agents Playground: `agentsplayground -e "http://localhost:3978/api
 .venv/bin/python -m pytest -q   # must pass before any commit
 ```
 
-CI runs `compileall` + `pytest` on every push/PR to `main`, and auto-deploys pushes to `main` (zip deploy + `/health` canary: all five config flags must be true). `infra/deploy-bot.sh` does the same redeploy from a machine with the Azure CLI, and also applies `DEMO_GATE_NAME` and `OPENROUTER_MODEL` from the local `.env` (warn-and-skip if absent). All three app settings are declared in `infra/main.bicep` (`APP_BASE_URL` derived, the other two as parameters passed by `deploy.sh` from `.env`); the CI job does not manage app settings. Always run `deploy-bot.sh` after a local `deploy.sh` run.
+CI runs `compileall` + `pytest` on every push/PR to `main`, and auto-deploys pushes to `main` (zip deploy + `/health` canary: all five config flags must be true). `infra/deploy-bot.sh` does the same redeploy from a machine with the Azure CLI, and also applies `DEMO_GATE_NAME` and `OPENROUTER_MODEL` from the local `.env` (warn-and-skip if absent). All four app settings are declared in `infra/main.bicep` (`APP_BASE_URL` and `SPEECH_REGION` derived, the other two as parameters passed by `deploy.sh` from `.env`); the CI job does not manage app settings. Always run `deploy-bot.sh` after a local `deploy.sh` run.
 
 ## Conventions
 

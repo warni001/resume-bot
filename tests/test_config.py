@@ -35,12 +35,16 @@ def test_from_env_reads_app_settings(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     monkeypatch.setenv("DEMO_GATE_NAME", "John Warnicke")
     monkeypatch.setenv("APP_BASE_URL", "https://example.azurewebsites.net")
+    monkeypatch.setenv("SPEECH_KEY", "sk-speech-test")
+    monkeypatch.setenv("SPEECH_REGION", "westus3")
     monkeypatch.setenv("PORT", "8000")
     cfg = BotConfig.from_env(load_vault=False)
     assert cfg.openrouter_model == "some/model:free"
     assert cfg.openrouter_api_key == "sk-or-test"
     assert cfg.demo_gate_name == "John Warnicke"
     assert cfg.app_base_url == "https://example.azurewebsites.net"
+    assert cfg.speech_key == "sk-speech-test"
+    assert cfg.speech_region == "westus3"
     assert cfg.port == 8000
 
 
@@ -91,6 +95,7 @@ def test_from_env_vault_overrides_env(monkeypatch):
             "CONNECTIONS-SERVICE-CONNECTION-SETTINGS-CLIENTID": "vault-app-id",
             "OpenRouterApiKey": "vault-key",
             "BlobStorageConnectionString": "vault-blob-conn",
+            "SpeechKey": "vault-speech-key",
         },
     )
     monkeypatch.setenv("KEY_VAULT_URL", "https://vault.vault.azure.net/")
@@ -101,6 +106,7 @@ def test_from_env_vault_overrides_env(monkeypatch):
     assert cfg.app_id == "vault-app-id"
     assert cfg.openrouter_api_key == "vault-key"
     assert cfg.blob_storage_connection_string == "vault-blob-conn"
+    assert cfg.speech_key == "vault-speech-key"
     # Vault values also land in os.environ for the SDK's env loader.
     assert (
         os.environ["CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID"]

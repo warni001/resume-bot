@@ -58,7 +58,7 @@ These block the build until decided. Defaults are proposed; John picks.
 |-------|--------|-------|
 | Language | Python 3.14 | Pin project-wide. Newest supported by both the SDK (1.9.0: 3.10–3.14) and App Service (runtimes include 3.14). |
 | Agent SDK | Microsoft 365 Agents SDK for Python, **1.9.0** | Packages: `microsoft-agents-hosting-aiohttp`, `microsoft-agents-hosting-core`, `microsoft-agents-activity`, `microsoft-agents-authentication-msal`, `microsoft-agents-storage-blob` (for Blob state). |
-| HTTP server | aiohttp (via the SDK's hosting-aiohttp package) | Same as the old bot. Serves `/api/messages` (via the SDK adapter), plus our own routes: `/health`, `/demo`, `/api/directline/token`, `/static/`. |
+| HTTP server | aiohttp (via the SDK's hosting-aiohttp package) | Same as the old bot. Serves `/api/messages` (via the SDK adapter), plus our own routes: `/health`, `/demo`, `/api/directline/token`, `/api/speech/token`, `/static/`. |
 | Auth | MSAL via `microsoft-agents-authentication-msal`, SingleTenant | NEW app registration (different from the old bot's `a373dd89-9618-4e0b-8603-760575b9f47f`), same tenant (`6803d008-cce8-4670-8115-f4a77cca0357`). New App ID created during provisioning; its SP is created idempotently in `deploy.sh`. The SDK reads its connection settings from env vars — see §5.7: the env var names are `CONNECTIONS__SERVICE_CONNECTION__SETTINGS__CLIENTID` / `CLIENTSECRET` / `TENANTID` (verified against installed 1.9.0); the new vault's secrets map to them by convention (dashes replace underscores). |
 | State | Blob storage (`microsoft-agents-storage-blob`) for persistent state | Conversation history and user state persist in Blob storage. Identity key: the email collected by the gate (WebChat/DirectLine) or `from.id` (Teams/Entra ID). |
 | LLM | OpenRouter, model from config | Same as the old bot. Model ID lives only in config (`.env` / app setting), never in code. Current model: `nvidia/nemotron-3-ultra-550b-a55b:free`. |
@@ -91,7 +91,8 @@ These are the structural differences that shape the code. They are design constr
 ```
 resume-bot/
 ├── app.py                  # aiohttp app: /api/messages (SDK adapter), /health, /demo,
-│                           #   /api/directline/token, /static/. Startup, config load.
+│                           #   /api/directline/token, /api/speech/token, /static/.
+│                           #   Startup, config load.
 ├── agent.py                # AgentApplication instance, route registrations, gate logic,
 │                           #   chat dispatch, error route. (Replaces old bot.py.)
 ├── chat.py                 # OpenRouter client: chat_reply(), system prompt, profile load,
@@ -111,7 +112,8 @@ resume-bot/
 ├── static/
 │   └── card-bg.jpg         # Gate card background image. Carried over.
 ├── webchat/
-│   └── index.html          # /demo page (WebChat 4.19.2 pinned CDN). Carried over.
+│   └── index.html          # /demo page (WebChat 4.19.2 + Speech SDK 1.53.0 pinned
+│                           #   CDN; mic + speaker voice controls). Carried over.
 ├── tests/
 │   ├── test_agent.py       # Route registration, gate logic, message dispatch.
 │   ├── test_chat.py        # OpenRouter client, profile wiring, history, timeout.
@@ -175,7 +177,8 @@ v1 is the smallest complete rebuild: the bot works end-to-end in the demo and in
 ### 5.3 Direct Line token endpoint + /demo page
 
 - **`GET /api/directline/token`:** Mints a ~30-minute Direct Line token server-side. The Direct Line secret lives in Key Vault as `DirectLineSecret` — it is **never** in client-side code or the repo. The endpoint is open by design (the secret can't be extracted from a minted token). Returns 503 if unconfigured, 502 on upstream failure. Same as the old bot.
-- **`GET /demo`:** Serves the WebChat page (`webchat/index.html`), WebChat **4.19.2 pinned via jsDelivr**. No token auto-refresh — a >30-minute demo conversation needs a page refresh (known limitation, same as the old bot).
+- **`GET /api/speech/token`:** Mints a ~10-minute Speech authorization token server-side (STS `issueToken`), for the demo page's voice input/output. The Speech key lives in Key Vault as `SpeechKey` — it is **never** in client-side code or the repo. The endpoint is open by design (same reasoning as Direct Line). Returns 503 if the key or `SPEECH_REGION` is unconfigured, 502 on upstream failure. The bot itself is unchanged by voice: speech-to-text and text-to-speech live entirely in the demo page.
+- **`GET /demo`:** Serves the WebChat page (`webchat/index.html`), WebChat **4.19.2 pinned via jsDelivr**. No token auto-refresh — a >30-minute demo conversation needs a page refresh (known limitation, same as the old bot). Voice: a mic button (push-to-talk, one utterance per click, sent as a chat message) and a speaker toggle (bot replies spoken aloud, serialized in order, markdown stripped). The Speech SDK for JavaScript is **1.53.0 pinned via jsDelivr**; voice controls stay disabled until a Speech token fetch succeeds, so the page degrades to text-only when Speech is unconfigured. Voice name is a one-line constant in the page (`en-US-AriaNeural`).
 - **No secret in the demo page.** (Standing rule.)
 
 ### 5.4 /health + deploy canary
@@ -215,10 +218,12 @@ v1 is the smallest complete rebuild: the bot works end-to-end in the demo and in
 | `ApplicationInsightsConnectionString` | `ApplicationInsightsConnectionString` | (same) | OTel exporter target. |
 | `OpenRouterApiKey` | `OpenRouterApiKey` | (same) | Dedicated `teams-bot` key, $5 limit, expires 2027-10-25. |
 | `DirectLineSecret` | `DirectLineSecret` | (same) | Direct Line Default Site key (new bot's channel). Never in the repo. |
+| `SpeechKey` | `SpeechKey` | (same) | Speech Services key (F0). Stored by the bicep template via `listKeys()`; minted into tokens by `/api/speech/token`. Never in the repo. |
 | Blob storage connection string | TBD (build-time) | TBD (build-time) | Storage account connection string for `microsoft-agents-storage-blob`. Verify the exact env var name the package expects against installed 1.9.0 during the build. |
 | `OPENROUTER_MODEL` | (app setting, not a vault secret) | (same) | Model ID. Config only, never code. Current: `nvidia/nemotron-3-ultra-550b-a55b:free`. |
 | `DEMO_GATE_NAME` | (app setting, not a vault secret) | (same) | Gate answer. Unset = gate off. |
 | `APP_BASE_URL` | (app setting, not a vault secret) | (same) | Feeds the gate-card background substitution. In prod it is the new web app's URL (new resource group `rg-resume-bot`). |
+| `SPEECH_REGION` | (app setting, not a vault secret) | (same) | Speech region for `/api/speech/token`. Derived from the bicep `location` (westus3); no `.env` value needed. |
 | `LOG_LEVEL` | (app setting, not a vault secret) | (same) | `INFO` in prod. |
 | `PORT` | (env) | (same) | Default 3978 locally; App Service sets 8000. |
 
@@ -249,6 +254,7 @@ New project-specific resources (decision #2 — fresh, parallel deployment):
 | App Insights | TBD at provisioning (new) |
 | Log Analytics | TBD at provisioning (new) |
 | Direct Line | New channel on the new bot (own secret in the new vault) |
+| Speech Services | F0, same region (key in the vault as `SpeechKey`) |
 | Tenant | `6803d008-cce8-4670-8115-f4a77cca0357` (same tenant) |
 | Subscription | "Azure subscription 1" (`2b5dd0c2-…`) (same subscription) |
 
@@ -271,7 +277,7 @@ The existing resources (for reference — the old bot keeps running on these):
 The new resources mirror the old shape (new resource group, new web app, new vault, new bot registration, new App Insights). Exact new names (other than the resource group) are set when the provisioning is run — the spec fixes the resource group name only.
 
 - **Two service principals are created idempotently in `deploy.sh` (John, Nov 9 review).** (1) The **app registration SP**: check whether a service principal exists for the new app registration (`az ad sp show --id <new-app-id>`); if missing, create it (`az ad sp create --id <new-app-id>`); if present, skip. This closes the Oct 30 gap (the old app registration had no service principal, `AADSTS7000229`, and it had to be created by hand). (2) The **deploy SP** (`github-resume-bot-deploy`): check whether the app/SP exists; if missing, create it and assign Contributor on `rg-resume-bot`; if present, skip (and ensure the role assignment). Both steps run on John's Mac with his credentials (he is a Global Administrator) — that is the security boundary. They are **not** in CI: the CI deploy SP has Contributor on the resource group only and must not be given Azure AD admin rights. They are also **not** done via a Bicep `deploymentScripts` resource (that would add a managed identity with AD permissions — more privilege, more moving parts). Bicep cannot create AD objects directly; the CLI step in the provisioning script is the right layer. `AZURE_DEPLOY_CREDENTIALS` belongs to the Deploy SP and is placed manually as a GitHub secret in the repo for CI use (decision #7).
-- **Manual steps for the new resources:** store the secrets in the new vault (the dash-separated auth names from §5.7, plus `ApplicationInsightsConnectionString`, `OpenRouterApiKey`, `DirectLineSecret`, and the Blob storage connection string — Direct Line needs its own channel + secret on the new bot). The app settings are not manual: all three are declared in `main.bicep` — `APP_BASE_URL` derived from the web app name, `DEMO_GATE_NAME` / `OPENROUTER_MODEL` as parameters passed by `deploy.sh` from the local `.env` (warn-and-deploy-empty if absent). `deploy-bot.sh` also applies the latter two from `.env` on every deploy (warn-and-skip if absent) and must always be run after a local `deploy.sh` run, since the bicep deployment replaces the whole appSettings collection; the CI deploy job does not manage settings. The bicep declares the Key Vault Secrets User role assignment for the new web app's managed identity, so it should be created correctly this time — but verify it exists (the Oct 30 incident was caused by it being missing).
+- **Manual steps for the new resources:** store the secrets in the new vault (the dash-separated auth names from §5.7, plus `ApplicationInsightsConnectionString`, `OpenRouterApiKey`, `DirectLineSecret`, and the Blob storage connection string — Direct Line needs its own channel + secret on the new bot). The app settings are not manual: all four are declared in `main.bicep` — `APP_BASE_URL` derived from the web app name and `SPEECH_REGION` derived from the deployment location, `DEMO_GATE_NAME` / `OPENROUTER_MODEL` as parameters passed by `deploy.sh` from the local `.env` (warn-and-deploy-empty if absent). `deploy-bot.sh` also applies the latter two from `.env` on every deploy (warn-and-skip if absent) and must always be run after a local `deploy.sh` run, since the bicep deployment replaces the whole appSettings collection; the CI deploy job does not manage settings. The bicep declares the Key Vault Secrets User role assignment for the new web app's managed identity, so it should be created correctly this time — but verify it exists (the Oct 30 incident was caused by it being missing).
 - **Cost:** ~$0. F1 + F0 tiers. Blob storage is nominal (Hot tier LRS ≈ $0.018/GB/month; the bot's state is KBs — a few cents/month at most). No PAYG compute. (Standing rule: no paid tiers to test a single-user bot.) John is not burning through Azure credits.
 
 ### 6.2 CI/CD (GitHub Actions — carried over, adapted)

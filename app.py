@@ -12,6 +12,10 @@ GET  /health         Liveness probe + deploy canary (five config flags)
 GET  /api/directline/token
                      Mint a short-lived Direct Line token for the demo page.
                      503s when no Direct Line secret is configured.
+GET  /api/speech/token
+                     Mint a short-lived Speech authorization token for the
+                     demo page's voice input/output. 503s when no Speech
+                     key/region is configured.
 GET  /demo           The WebChat demo page (no credentials in it — it fetches
                      a token from /api/directline/token on load)
 GET  /static/        Static files (gate card background image)
@@ -124,7 +128,7 @@ async def messages(req: Request) -> Response:
     authorization decorator the request carries no claims identity, the
     turn runs anonymous, and outbound sends go out unauthenticated
     (Direct Line 401s them). Only this route is protected; /health,
-    /demo, /api/directline/token and /static/ stay open."""
+    /demo, /api/directline/token, /api/speech/token and /static/ stay open."""
     response = await start_agent_process(req, AGENT_APP, ADAPTER)
     return response if response is not None else Response(status=201)
 
@@ -163,6 +167,41 @@ async def directline_token(req: Request) -> Response:
     return json_response({"token": token, "expires_in": expires_in or 1800})
 
 
+async def speech_token(req: Request) -> Response:
+    """Mint a short-lived Speech authorization token for the demo page.
+
+    The Speech key never leaves the server: the browser gets a token
+    good for ~10 minutes, scoped to speech recognition/synthesis in
+    the configured region. The STS endpoint returns the token as
+    plain text, not JSON.
+    """
+    key = CONFIG.speech_key
+    region = CONFIG.speech_region
+    if not key or not region:
+        return json_response({"error": "speech not configured"}, status=503)
+    try:
+        async with ClientSession() as session:
+            async with session.post(
+                f"https://{region}.api.cognitive.microsoft.com/sts/v1.0/issueToken",
+                headers={"Ocp-Apim-Subscription-Key": key},
+            ) as resp:
+                if resp.status != 200:
+                    log.warning(
+                        "speech token request failed: HTTP %s", resp.status
+                    )
+                    return json_response(
+                        {"error": "speech token request failed"}, status=502
+                    )
+                token = (await resp.text()).strip()
+    except Exception as exc:  # noqa: BLE001 - network failure to STS
+        log.warning("speech token request failed: %s", exc)
+        return json_response({"error": "speech token request failed"}, status=502)
+    if not token:
+        return json_response({"error": "speech token request failed"}, status=502)
+    # STS tokens last 10 minutes; the page refreshes early.
+    return json_response({"token": token, "region": region, "expires_in": 600})
+
+
 async def demo(req: Request) -> Response:
     if _DEMO_PAGE_HTML is None:
         return Response(status=404, text="demo page not found")
@@ -198,6 +237,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/messages", messages)
     app.router.add_get("/health", health)
     app.router.add_get("/api/directline/token", directline_token)
+    app.router.add_get("/api/speech/token", speech_token)
     app.router.add_get("/demo", demo)
     static_dir = Path(__file__).parent / "static"
     if static_dir.is_dir():
