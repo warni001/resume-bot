@@ -4,19 +4,150 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Resume Bot — Demo</title>
-  <!-- No credentials in this page: it fetches a short-lived Direct Line
-       token from /api/directline/token on load. -->
+  <!-- No credentials in this page: it fetches short-lived Direct Line
+       and Speech tokens from /api/directline/token and
+       /api/speech/token. -->
   <!-- Pinned 4.19.2 via jsDelivr: the MS CDN versioned path 404s,
        only /latest/ is served there, and /latest/ moves under you. -->
   <script src="https://cdn.jsdelivr.net/npm/botframework-webchat@4.19.2/dist/webchat.js"></script>
+  <!-- Speech SDK pinned the same way: 1.53.0 (Oct 2026 release). The
+       browser bundle exposes window.SpeechSDK. -->
+  <script src="https://cdn.jsdelivr.net/npm/microsoft-cognitiveservices-speech-sdk@1.53.0/distrib/browser/microsoft.cognitiveservices.speech.sdk.bundle-min.js"></script>
   <style>
     html, body { height: 100%; margin: 0; }
-    #webchat { height: 100%; width: 100%; }
+    #toolbar { height: 36px; box-sizing: border-box; display: flex; align-items: center; gap: 8px; padding: 0 8px; border-bottom: 1px solid #ccc; font-family: sans-serif; font-size: 14px; }
+    #toolbar .title { flex: 1; }
+    #toolbar button { cursor: pointer; }
+    #toolbar button:disabled { cursor: default; opacity: 0.4; }
+    #toolbar button.active { font-weight: bold; }
+    #webchat { height: calc(100% - 36px); width: 100%; }
   </style>
 </head>
 <body>
+  <div id="toolbar">
+    <span class="title">Resume Bot — Demo</span>
+    <button id="mic" type="button" disabled title="Speak a message">🎤 Talk</button>
+    <button id="speaker" type="button" disabled title="Speak bot replies aloud">🔊 Voice replies: off</button>
+  </div>
   <div id="webchat"></div>
   <script>
+    const VOICE_NAME = 'en-US-LewisMultilingualNeural'; // one line to change the voice
+
+    // Short-lived Speech auth, cached until near expiry (tokens last
+    // 10 minutes). A failed fetch leaves voice disabled.
+    let speechAuth = null;
+
+    async function getSpeechAuth() {
+      const now = Date.now();
+      if (speechAuth && now - speechAuth.fetchedAt < (speechAuth.expiresIn - 60) * 1000) {
+        return speechAuth;
+      }
+      const res = await fetch('/api/speech/token');
+      if (!res.ok) throw new Error('speech token request failed');
+      const { token, region, expires_in } = await res.json();
+      speechAuth = { token, region, fetchedAt: now, expiresIn: expires_in || 600 };
+      return speechAuth;
+    }
+
+    function speechConfig(auth) {
+      return window.SpeechSDK.SpeechConfig.fromAuthorizationToken(auth.token, auth.region);
+    }
+
+    function stripMarkdown(text) {
+      return text
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        .replace(/[*_`#]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    async function setupVoice(store) {
+      const micBtn = document.getElementById('mic');
+      const speakerBtn = document.getElementById('speaker');
+      if (!window.SpeechSDK) {
+        console.warn('Speech SDK failed to load; voice disabled.');
+        return;
+      }
+      try {
+        await getSpeechAuth();
+      } catch (err) {
+        console.warn('Speech is not configured; voice disabled.');
+        return;
+      }
+      micBtn.disabled = false;
+      speakerBtn.disabled = false;
+
+      let voiceOutput = false;
+      let spokenCount = 0;
+      let speakChain = Promise.resolve();
+
+      // Toggling off stops future speech; the current utterance finishes.
+      speakerBtn.addEventListener('click', () => {
+        voiceOutput = !voiceOutput;
+        speakerBtn.textContent = voiceOutput ? '🔊 Voice replies: on' : '🔊 Voice replies: off';
+        speakerBtn.classList.toggle('active', voiceOutput);
+      });
+
+      micBtn.addEventListener('click', async () => {
+        micBtn.disabled = true;
+        micBtn.textContent = '🎤 Listening…';
+        let recognizer = null;
+        try {
+          const auth = await getSpeechAuth();
+          const audio = window.SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
+          recognizer = new window.SpeechSDK.SpeechRecognizer(speechConfig(auth), audio);
+          const result = await new Promise((resolve, reject) => {
+            recognizer.recognizeOnceAsync(resolve, reject);
+          });
+          if (result.reason === window.SpeechSDK.ResultReason.RecognizedSpeech && result.text) {
+            if (!voiceOutput) speakerBtn.click(); // talking implies listening
+            store.dispatch({ type: 'WEB_CHAT/SEND_MESSAGE', payload: { text: result.text } });
+          } else {
+            console.warn('Speech not recognized:', result.reason, result.errorDetails || '');
+          }
+        } catch (err) {
+          console.warn('Speech recognition failed:', err);
+        } finally {
+          if (recognizer) recognizer.close();
+          micBtn.disabled = false;
+          micBtn.textContent = '🎤 Talk';
+        }
+      });
+
+      async function speakAsync(text) {
+        try {
+          const auth = await getSpeechAuth();
+          const config = speechConfig(auth);
+          config.speechSynthesisVoiceName = VOICE_NAME;
+          const synthesizer = new window.SpeechSDK.SpeechSynthesizer(config);
+          try {
+            await new Promise((resolve, reject) => {
+              synthesizer.speakTextAsync(stripMarkdown(text), resolve, reject);
+            });
+          } finally {
+            synthesizer.close();
+          }
+        } catch (err) {
+          console.warn('Speech synthesis failed:', err);
+        }
+      }
+
+      store.subscribe(() => {
+        const activities = store.getState().activities || [];
+        if (activities.length < spokenCount) spokenCount = activities.length;
+        const fresh = activities.slice(spokenCount);
+        spokenCount = activities.length;
+        // Advance even when muted: enabling the speaker must not replay history.
+        if (!voiceOutput) return;
+        for (const activity of fresh) {
+          if (activity.type === 'message' && activity.from && activity.from.role === 'bot'
+              && typeof activity.text === 'string' && activity.text) {
+            speakChain = speakChain.then(() => speakAsync(activity.text));
+          }
+        }
+      });
+    }
+
     (async () => {
       const el = document.getElementById('webchat');
       let res;
@@ -31,10 +162,12 @@
         return;
       }
       const { token } = await res.json();
+      const store = window.WebChat.createStore();
       window.WebChat.renderWebChat(
-        { directLine: window.WebChat.createDirectLine({ token }) },
+        { directLine: window.WebChat.createDirectLine({ token }), store },
         el
       );
+      setupVoice(store);
     })();
   </script>
 </body>

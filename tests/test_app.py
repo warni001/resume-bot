@@ -2,14 +2,19 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import app
-from app import create_app, demo, directline_token, health
+from app import create_app, demo, directline_token, health, speech_token
 
 
-def fake_session_with(status, payload):
-    """An aiohttp ClientSession whose post() yields a fake response."""
+def fake_session_with(status, payload=None, text=None):
+    """An aiohttp ClientSession whose post() yields a fake response.
+
+    JSON bodies via `payload`, plain-text bodies (the STS token
+    endpoint) via `text`.
+    """
     fake_resp = AsyncMock()
     fake_resp.status = status
     fake_resp.json = AsyncMock(return_value=payload)
+    fake_resp.text = AsyncMock(return_value=text)
     response_cm = MagicMock()
     response_cm.__aenter__ = AsyncMock(return_value=fake_resp)
     response_cm.__aexit__ = AsyncMock(return_value=False)
@@ -69,6 +74,71 @@ async def test_directline_token_defaults_expires_in():
     ):
         resp = await directline_token(None)
     assert json.loads(resp.text)["expires_in"] == 1800
+
+
+async def test_speech_token_unconfigured_without_key_503():
+    with (
+        patch.object(app.CONFIG, "speech_key", ""),
+        patch.object(app.CONFIG, "speech_region", "westus3"),
+    ):
+        resp = await speech_token(None)
+    assert resp.status == 503
+
+
+async def test_speech_token_unconfigured_without_region_503():
+    with (
+        patch.object(app.CONFIG, "speech_key", "key"),
+        patch.object(app.CONFIG, "speech_region", ""),
+    ):
+        resp = await speech_token(None)
+    assert resp.status == 503
+
+
+async def test_speech_token_success():
+    session = fake_session_with(200, text="tok")
+    with (
+        patch.object(app.CONFIG, "speech_key", "speechkey123"),
+        patch.object(app.CONFIG, "speech_region", "westus3"),
+        patch("app.ClientSession", return_value=session),
+    ):
+        resp = await speech_token(None)
+    assert resp.status == 200
+    body = json.loads(resp.text)
+    assert body["token"] == "tok"
+    assert body["region"] == "westus3"
+    assert body["expires_in"] == 600
+    # The key is sent to STS, never back to the caller.
+    assert "speechkey123" not in resp.text
+    # The STS contract: region-scoped issueToken URL, key header.
+    url = session.post.call_args.args[0]
+    assert (
+        url
+        == "https://westus3.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+    )
+    headers = session.post.call_args.kwargs["headers"]
+    assert headers == {"Ocp-Apim-Subscription-Key": "speechkey123"}
+
+
+async def test_speech_token_upstream_failure_502():
+    session = fake_session_with(401, text="")
+    with (
+        patch.object(app.CONFIG, "speech_key", "key"),
+        patch.object(app.CONFIG, "speech_region", "westus3"),
+        patch("app.ClientSession", return_value=session),
+    ):
+        resp = await speech_token(None)
+    assert resp.status == 502
+
+
+async def test_speech_token_empty_token_502():
+    session = fake_session_with(200, text="  \n")
+    with (
+        patch.object(app.CONFIG, "speech_key", "key"),
+        patch.object(app.CONFIG, "speech_region", "westus3"),
+        patch("app.ClientSession", return_value=session),
+    ):
+        resp = await speech_token(None)
+    assert resp.status == 502
 
 
 async def test_health_reports_all_five_flags():
@@ -140,6 +210,7 @@ def test_create_app_registers_routes():
     assert "/api/messages" in paths
     assert "/health" in paths
     assert "/api/directline/token" in paths
+    assert "/api/speech/token" in paths
     assert "/demo" in paths
     # static/ ships with the repo, so /static/ is served.
     assert "/static" in paths

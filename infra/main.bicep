@@ -10,6 +10,9 @@
 //   the web app's managed identity gets Key Vault Secrets User
 //   Storage account (Standard_LRS, Hot) for Blob state
 //   Log Analytics workspace + Application Insights (workspace-based)
+//   Speech Services (F0) for demo voice; its key is stored in the
+//   vault as SpeechKey and minted into short-lived tokens by
+//   /api/speech/token
 //
 // The Microsoft App ID / password come from an app registration created by
 // deploy.sh (Bicep cannot create Entra app registrations). The password is
@@ -48,6 +51,7 @@ var suffix = uniqueString(resourceGroup().id)
 var planName = 'plan-${baseName}'
 var webAppName = 'app-${baseName}-${suffix}'
 var botName = 'bot-${baseName}-${suffix}'
+var speechName = 'speech-${baseName}-${suffix}'
 var vaultName = 'kv-${replace(baseName, '-', '')}-${take(suffix, 8)}'
 var storageName = 'st${replace(baseName, '-', '')}${take(suffix, 8)}'
 var logAnalyticsName = 'log-${baseName}'
@@ -110,6 +114,10 @@ resource webApp 'Microsoft.Web/sites@2023-12-01' = {
           name: 'OPENROUTER_MODEL'
           value: openRouterModel
         }
+        {
+          name: 'SPEECH_REGION'
+          value: location
+        }
       ]
     }
   }
@@ -168,6 +176,14 @@ resource secretBlobStorage 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
   name: 'BlobStorageConnectionString'
   properties: {
     value: 'DefaultEndpointsProtocol=https;AccountName=${storage.name};AccountKey=${storage.listKeys().keys[0].value};EndpointSuffix=${environment().suffixes.storage}'
+  }
+}
+
+resource secretSpeechKey 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = {
+  parent: vault
+  name: 'SpeechKey'
+  properties: {
+    value: speech.listKeys().key1
   }
 }
 
@@ -247,6 +263,15 @@ resource teamsChannel 'Microsoft.BotService/botServices/channels@2022-09-15' = {
   }
 }
 
+resource speech 'Microsoft.CognitiveServices/accounts@2024-10-01' = {
+  name: speechName
+  location: location
+  kind: 'SpeechServices'
+  sku: {
+    name: 'F0'
+  }
+}
+
 output webAppName string = webApp.name
 output messagingEndpoint string = messagingEndpoint
 output keyVaultUrl string = vault.properties.vaultUri
@@ -254,3 +279,4 @@ output botName string = bot.name
 output microsoftAppId string = microsoftAppId
 output appInsightsName string = appInsights.name
 output storageAccountName string = storage.name
+output speechAccountName string = speech.name
