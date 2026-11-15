@@ -99,6 +99,7 @@ async def test_speech_token_success():
     with (
         patch.object(app.CONFIG, "speech_key", "speechkey123"),
         patch.object(app.CONFIG, "speech_region", "westus3"),
+        patch.object(app.CONFIG, "speech_voice_name", "en-US-AriaNeural"),
         patch("app.ClientSession", return_value=session),
     ):
         resp = await speech_token(None)
@@ -106,6 +107,7 @@ async def test_speech_token_success():
     body = json.loads(resp.text)
     assert body["token"] == "tok"
     assert body["region"] == "westus3"
+    assert body["voice"] == "en-US-AriaNeural"
     assert body["expires_in"] == 600
     # The key is sent to STS, never back to the caller.
     assert "speechkey123" not in resp.text

@@ -59,6 +59,7 @@ Configuration comes from env vars or a `.env` file (never committed):
 | `DEMO_GATE_NAME` | Gate answer; unset disables the gate |
 | `APP_BASE_URL` | Public base URL, for the gate card's background image |
 | `SPEECH_REGION` | Speech region for the voice token endpoint (set by bicep from the deployment location) |
+| `SPEECH_VOICE_NAME` | TTS voice ShortName served by the token endpoint (default `en-US-LewisMultilingualNeural`; valid names are the `ShortName` field from the Speech voices list API) |
 | `BLOB_STORAGE_CONNECTION_STRING` | State backend; unset falls back to in-memory storage |
 
 Test with the Agents Playground: `agentsplayground -e "http://localhost:3978/api/messages" -c "emulator"`. Preview cards in the Adaptive Cards designer or WebChat, not the old Emulator (it renders cards poorly).
