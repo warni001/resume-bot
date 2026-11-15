@@ -70,7 +70,7 @@ Test with the Agents Playground: `agentsplayground -e "http://localhost:3978/api
 .venv/bin/python -m pytest -q   # must pass before any commit
 ```
 
-CI runs `compileall` + `pytest` on every push/PR to `main`, and auto-deploys pushes to `main` (zip deploy + `/health` canary: all five config flags must be true). `infra/deploy-bot.sh` does the same redeploy from a machine with the Azure CLI, and also applies `DEMO_GATE_NAME` and `OPENROUTER_MODEL` from the local `.env` (warn-and-skip if absent). All four app settings are declared in `infra/main.bicep` (`APP_BASE_URL` and `SPEECH_REGION` derived, the other two as parameters passed by `deploy.sh` from `.env`); the CI job does not manage app settings. Always run `deploy-bot.sh` after a local `deploy.sh` run.
+CI runs `compileall` + `pytest` on every push/PR to `main`, and auto-deploys pushes to `main` (zip deploy + `/health` canary: all five config flags must be true). `infra/deploy-bot.sh` does the same redeploy from a machine with the Azure CLI, and also applies `DEMO_GATE_NAME`, `OPENROUTER_MODEL`, and `SPEECH_VOICE_NAME` from the local `.env` (warn-and-skip if absent). All four app settings are declared in `infra/main.bicep` (`APP_BASE_URL` and `SPEECH_REGION` derived, the other two as parameters passed by `deploy.sh` from `.env`); the CI job does not manage app settings. Always run `deploy-bot.sh` after a local `deploy.sh` run.
 
 ## Conventions
 
