@@ -14,7 +14,8 @@ GET  /api/directline/token
                      503s when no Direct Line secret is configured.
 GET  /api/speech/token
                      Mint a short-lived Speech authorization token for the
-                     demo page's voice input/output. 503s when no Speech
+                     demo page's voice input/output, plus the configured
+                     voice name. 503s when no Speech
                      key/region is configured.
 GET  /demo           The WebChat demo page (no credentials in it — it fetches
                      a token from /api/directline/token on load)
@@ -173,7 +174,8 @@ async def speech_token(req: Request) -> Response:
     The Speech key never leaves the server: the browser gets a token
     good for ~10 minutes, scoped to speech recognition/synthesis in
     the configured region. The STS endpoint returns the token as
-    plain text, not JSON.
+    plain text, not JSON. The response also carries the configured
+    voice ShortName, so the page never hardcodes a voice.
     """
     key = CONFIG.speech_key
     region = CONFIG.speech_region
@@ -199,7 +201,14 @@ async def speech_token(req: Request) -> Response:
     if not token:
         return json_response({"error": "speech token request failed"}, status=502)
     # STS tokens last 10 minutes; the page refreshes early.
-    return json_response({"token": token, "region": region, "expires_in": 600})
+    return json_response(
+        {
+            "token": token,
+            "region": region,
+            "voice": CONFIG.speech_voice_name,
+            "expires_in": 600,
+        }
+    )
 
 
 async def demo(req: Request) -> Response:

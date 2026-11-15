@@ -26,7 +26,8 @@ Other vault secrets keep their names:
 The demo gate name (DEMO_GATE_NAME) is NOT a secret — it is the
 developer's name, asked for on a challenge card — so it lives in env /
 App Settings only, never in Key Vault. OPENROUTER_MODEL, DEMO_GATE_NAME,
-APP_BASE_URL, and SPEECH_REGION are app settings, not vault secrets.
+APP_BASE_URL, SPEECH_REGION, and SPEECH_VOICE_NAME are app settings, not
+vault secrets.
 """
 
 from __future__ import annotations
@@ -96,6 +97,8 @@ class BotConfig:
     # Demo voice (optional; off unless configured)
     speech_key: str = ""  # SpeechKey vault secret
     speech_region: str = ""  # SPEECH_REGION app setting, e.g. westus3
+    # TTS voice ShortName, as listed by the Speech voices list API.
+    speech_voice_name: str = "en-US-LewisMultilingualNeural"
 
     @classmethod
     def from_env(cls, load_vault: bool = True) -> "BotConfig":
@@ -137,6 +140,9 @@ class BotConfig:
             app_base_url=os.getenv("APP_BASE_URL", ""),
             speech_key=os.getenv("SPEECH_KEY", ""),
             speech_region=os.getenv("SPEECH_REGION", ""),
+            speech_voice_name=os.getenv(
+                "SPEECH_VOICE_NAME", "en-US-LewisMultilingualNeural"
+            ),
         )
         if load_vault and cfg.key_vault_url:
             cfg._load_from_key_vault()

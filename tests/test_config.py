@@ -37,6 +37,7 @@ def test_from_env_reads_app_settings(monkeypatch):
     monkeypatch.setenv("APP_BASE_URL", "https://example.azurewebsites.net")
     monkeypatch.setenv("SPEECH_KEY", "sk-speech-test")
     monkeypatch.setenv("SPEECH_REGION", "westus3")
+    monkeypatch.setenv("SPEECH_VOICE_NAME", "en-US-AriaNeural")
     monkeypatch.setenv("PORT", "8000")
     cfg = BotConfig.from_env(load_vault=False)
     assert cfg.openrouter_model == "some/model:free"
@@ -45,7 +46,14 @@ def test_from_env_reads_app_settings(monkeypatch):
     assert cfg.app_base_url == "https://example.azurewebsites.net"
     assert cfg.speech_key == "sk-speech-test"
     assert cfg.speech_region == "westus3"
+    assert cfg.speech_voice_name == "en-US-AriaNeural"
     assert cfg.port == 8000
+
+
+def test_from_env_defaults_speech_voice_name(monkeypatch):
+    monkeypatch.delenv("SPEECH_VOICE_NAME", raising=False)
+    cfg = BotConfig.from_env(load_vault=False)
+    assert cfg.speech_voice_name == "en-US-LewisMultilingualNeural"
 
 
 def test_from_env_defaults_sdk_env_vars_present(monkeypatch):

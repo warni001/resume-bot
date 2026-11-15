@@ -31,10 +31,9 @@
   </div>
   <div id="webchat"></div>
   <script>
-    const VOICE_NAME = 'en-US-LewisMultilingualNeural'; // one line to change the voice
-
     // Short-lived Speech auth, cached until near expiry (tokens last
-    // 10 minutes). A failed fetch leaves voice disabled.
+    // 10 minutes). A failed fetch leaves voice disabled. The voice
+    // name arrives with the token, from server config.
     let speechAuth = null;
 
     async function getSpeechAuth() {
@@ -44,8 +43,8 @@
       }
       const res = await fetch('/api/speech/token');
       if (!res.ok) throw new Error('speech token request failed');
-      const { token, region, expires_in } = await res.json();
-      speechAuth = { token, region, fetchedAt: now, expiresIn: expires_in || 600 };
+      const { token, region, voice, expires_in } = await res.json();
+      speechAuth = { token, region, voice, fetchedAt: now, expiresIn: expires_in || 600 };
       return speechAuth;
     }
 
@@ -118,7 +117,7 @@
         try {
           const auth = await getSpeechAuth();
           const config = speechConfig(auth);
-          config.speechSynthesisVoiceName = VOICE_NAME;
+          config.speechSynthesisVoiceName = auth.voice;
           const synthesizer = new window.SpeechSDK.SpeechSynthesizer(config);
           try {
             await new Promise((resolve, reject) => {
