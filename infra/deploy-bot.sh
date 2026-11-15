@@ -18,11 +18,12 @@ ZIP_PATH="/tmp/bot-deploy.zip"
 
 git pull --rebase
 
-# App settings from the local .env (never committed): DEMO_GATE_NAME and
-# OPENROUTER_MODEL are applied on every deploy so the Azure config tracks
-# the local source of truth. Absent values warn and skip — the canary
-# reports a missing model, and a missing gate name just means no gate
-# card. APP_BASE_URL is declared in main.bicep, not set here.
+# App settings from the local .env (never committed): DEMO_GATE_NAME,
+# OPENROUTER_MODEL, and SPEECH_VOICE_NAME are applied on every deploy so
+# the Azure config tracks the local source of truth. Absent values warn
+# and skip — the canary reports a missing model, a missing gate name just
+# means no gate card, and a missing voice name means the default voice.
+# APP_BASE_URL is declared in main.bicep, not set here.
 if [ -f .env ]; then
     set -a
     # shellcheck disable=SC1091
@@ -39,6 +40,11 @@ if [ -n "${DEMO_GATE_NAME:-}" ]; then
     SETTINGS+=("DEMO_GATE_NAME=${DEMO_GATE_NAME}")
 else
     echo "warning: DEMO_GATE_NAME not set; skipping (gate will be off)" >&2
+fi
+if [ -n "${SPEECH_VOICE_NAME:-}" ]; then
+    SETTINGS+=("SPEECH_VOICE_NAME=${SPEECH_VOICE_NAME}")
+else
+    echo "warning: SPEECH_VOICE_NAME not set; skipping (default voice applies)" >&2
 fi
 if [ "${#SETTINGS[@]}" -gt 0 ]; then
     az webapp config appsettings set \
